@@ -115,28 +115,19 @@ def call_model(history, inputs):
         )
         response.raise_for_status()
         data = response.json()
+        reply = data["choices"][0]["message"]["content"]
         
-        # Extract content
-        message = data["choices"][0]["message"]
-        content = message.get("content", "")
-        
-        # Extract function name if tool_calls exist
-        function_name = None
-        if "tool_calls" in message and message["tool_calls"]:
-            function_name = message["tool_calls"][0]["function"]["name"]
-        
-        # Process content with inputs if content exists
-        if content:
-            for original in inputs.values():
-                if original.lower() in content.lower():
-                    content = re.sub(re.escape(original), original, content, flags=re.IGNORECASE)
 
-        return content, function_name
+        for original in inputs.values():
+            if original.lower() in reply.lower():
+                reply = re.sub(re.escape(original), original, reply, flags=re.IGNORECASE)
+
+        return reply
     except Exception as e:
         print(traceback.format_exc())
         if hasattr(e, 'response') and e.response is not None:
             print(e.response.text)
-        return f"Error communicating with model: {e}", None
+        return f"Error communicating with model: {e}"
     
 ASSISTANT_SYSINT = {
     "role":"system",
@@ -245,18 +236,12 @@ def call_model_with_tools(history, tools_schema=None):
     last_message = getattr(history[-1], "content", "") if not isinstance(history[-1], dict) else history[-1].get("content", "")
 
     # Call model
-    reply_text, function_name = call_model(history, {"input": last_message})
+    reply_text = call_model(history, {"input": last_message})
 
     print("#Reply#", reply_text)
-    if function_name:
-        print(f"#Function Name#: {function_name}")
 
-    # Build tool_calls list if function_name exists
-    tool_calls = []
-    if function_name:
-        tool_calls = [{"name": function_name, "arguments": {}}]
-
-    return AIMessage(content=reply_text, tool_calls=tool_calls)
+    # Normally, tool calls are returned by the model (empty list here as placeholder)
+    return AIMessage(content=reply_text, tool_calls=[])
 
 
 def chatbot_with_tools(state: infoState) -> infoState:
