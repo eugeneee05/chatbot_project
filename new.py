@@ -1,6 +1,7 @@
 import re
 import requests
 import traceback
+import json
 from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
@@ -101,6 +102,8 @@ def call_model(history, inputs):
     # Convert LangChain message objects (e.g. HumanMessage, AIMessage) to dicts
     if history and hasattr(history[0], "type"):
         history = messages_to_dict(history)
+    
+    print("#History#", history)
 
     payload = {
         "model": "unsloth/phi-4-mini-instruct",
@@ -115,19 +118,20 @@ def call_model(history, inputs):
         )
         response.raise_for_status()
         data = response.json()
-        reply = data["choices"][0]["message"]["content"]
-        
+        message = data["choices"][0]["message"]
+        reply = message.get("content", "") or ""
+        tool_calls = message.get("tool_calls", [])
 
         for original in inputs.values():
             if original.lower() in reply.lower():
                 reply = re.sub(re.escape(original), original, reply, flags=re.IGNORECASE)
 
-        return reply
+        return reply, tool_calls
     except Exception as e:
         print(traceback.format_exc())
         if hasattr(e, 'response') and e.response is not None:
             print(e.response.text)
-        return f"Error communicating with model: {e}"
+        return f"Error communicating with model: {e}", []
     
 ASSISTANT_SYSINT = {
     "role":"system",
@@ -146,8 +150,12 @@ WELCOME_MSG = "Welcome to the TechFlow Assistant Chatbot. Type 'q' to quit. What
 
 def human_node(state: infoState) -> infoState:
     """Display the last model message to the user, and receive the user's input."""
-    last_msg = state["messages"][-1]
-    print("Model:", getattr(last_msg, "content", last_msg.get("content") if isinstance(last_msg, dict) else last_msg))
+    messages = state.get("messages", [])
+    if messages:
+        last_msg = messages[-1]
+        print("Model:", getattr(last_msg, "content", last_msg.get("content") if isinstance(last_msg, dict) else last_msg))
+    else:
+        print("Model: (no message)")
 
     user_input = input("User: ")
 
@@ -156,6 +164,8 @@ def human_node(state: infoState) -> infoState:
         state["messages"].append({"role": "user", "content": "goodbye"})
     else:
         state["messages"].append({"role": "user", "content": user_input})
+
+    print("#Messages#", state["messages"])
 
     return state
 
@@ -168,7 +178,7 @@ def maybe_exit_human_node(state: infoState) -> Literal["chatbot", "__end__"]:
 
 @tool
 def get_info() -> str:
-    """Provide the information that required the user to fill in."""
+    """Provide all the exact information that required the user to fill in."""
     return """
 Site Count:
 Offset Count:
@@ -222,26 +232,50 @@ def call_model_with_tools(history, tools_schema=None):
         history = messages_to_dict(history)
 
     # Add tool info to system context
-    if tools_schema:
-        tool_descriptions = "\n".join(
-            [f"- {t['function']['name']}: {t['function']['description']}" for t in tools_schema]
-        )
-        system_message = {
-            "role": "system",
-            "content": f"You have access to these tools:\n{tool_descriptions}\nCall them when relevant."
-        }
-        history = [system_message] + history
+    # if tools_schema:
+    #     tool_descriptions = "\n".join(
+    #         [f"- {t['function']['name']}: {t['function']['description']}" for t in tools_schema]
+    #     )
+    #     system_message = {
+    #         "role": "system",
+    #         "content": f"You have access to these tools:\n{tool_descriptions}\nCall them when relevant."
+    #     }
+    #     history = [system_message] + history
 
     # Get last message content
     last_message = getattr(history[-1], "content", "") if not isinstance(history[-1], dict) else history[-1].get("content", "")
+    print("#Last Message#", last_message)
 
     # Call model
-    reply_text = call_model(history, {"input": last_message})
+    reply_text, api_tool_calls = call_model(history, {"input": last_message})
 
     print("#Reply#", reply_text)
 
-    # Normally, tool calls are returned by the model (empty list here as placeholder)
-    return AIMessage(content=reply_text, tool_calls=[])
+    # Format tool_calls for AIMessage
+    formatted_tool_calls = []
+    if api_tool_calls:
+        for tc in api_tool_calls:
+            # Format tool call to match AIMessage expected format
+            # AIMessage expects: id (str), name (str), args (dict)
+            function_info = tc.get("function", {})
+            tool_name = function_info.get("name", "")
+            tool_args = function_info.get("arguments", {})
+            
+            # If arguments is a string, try to parse it as JSON
+            if isinstance(tool_args, str):
+                try:
+                    tool_args = json.loads(tool_args)
+                except:
+                    tool_args = {}
+            
+            formatted_tc = {
+                "id": tc.get("id", ""),
+                "name": tool_name,
+                "args": tool_args
+            }
+            formatted_tool_calls.append(formatted_tc)
+
+    return AIMessage(content=reply_text, tool_calls=formatted_tool_calls)
 
 
 def chatbot_with_tools(state: infoState) -> infoState:
@@ -253,29 +287,19 @@ def chatbot_with_tools(state: infoState) -> infoState:
 
     if state.get("messages"):
         print("A")
+        print("#State Messages#", state["messages"])
         new_output = call_model_with_tools([ASSISTANT_SYSINT] + state["messages"], tools_schema)
 
         # --- DEBUG: print raw model reply ---
         print("Model reply:", getattr(new_output, "content", ""))
         
-        # --- Parse tool calls from model text ---
-        tool_calls = []
-        model_text = getattr(new_output, "content", "")
-        # Look for CALL_TOOL: tool_name markers in the model's reply
-        matches = re.findall(r"CALL_TOOL:\s*(\w+)", model_text)
-        for m in matches:
-            tool_calls.append({"name": m, "arguments": {}})
-
-        # Attach tool_calls to AIMessage
-        new_output.tool_calls = tool_calls
-
-        # --- DEBUG: show parsed tool calls ---
-        print("DEBUG: Parsed tool_calls from model:")
+        # --- DEBUG: show tool calls from API response ---
+        print("DEBUG: Tool calls from API:")
         if new_output.tool_calls:
             for t in new_output.tool_calls:
-                print(f"Tool Name: {t.get('name')}, Args: {t.get('arguments')}")
+                print(f"Tool Name: {t.get('name')}, Args: {t.get('args')}, ID: {t.get('id')}")
         else:
-            print("No tool calls detected in model reply.")
+            print("No tool calls in API response.")
 
     else:
         print("B")
@@ -285,27 +309,39 @@ def chatbot_with_tools(state: infoState) -> infoState:
     updated_messages = state.get("messages", []) + [new_output]
     state = {**defaults, **state, "messages": updated_messages}
 
-    # Automatically handle any tool calls returned by the model
-    last_msg = updated_messages[-1]
-    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-        for tool_call in last_msg.tool_calls:
-            tool_name = tool_call["name"]
-            if tool_name == "add_to_info":
-                content_to_add = state["messages"][-2]["content"]
-                add_to_info([content_to_add])
-                state["info"].append(content_to_add)
-            elif tool_name == "confirm_info":
-                confirm_info()
-            elif tool_name == "create_JSON":
-                create_JSON(state["info"])
-                state["finished"] = True
-            elif tool_name == "get_info":
-                get_info()  # optional, can return info to model
-            else:
-                print(f"Tool {tool_name} is in schema but not implemented in Python.")
+    print("#Updated Messages#", updated_messages)
+    print("#New State#", state)
+
+    # Note: Tool calls will be handled by the tool nodes (tools/creating) based on routing
+    # Don't execute tools here - let the routing function decide where to go
 
     return state
 
+
+def update_state_after_tools(state: infoState) -> infoState:
+    """Update state after tool execution - extract info from tool calls and update state."""
+    info = state.get("info", [])
+    finished = state.get("finished", False)
+
+    print("#Update State After Tools#")
+    
+    # Check the last AI message for tool calls to extract info
+    messages = state.get("messages", [])
+    for msg in reversed(messages):
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tool_call in msg.tool_calls:
+                if tool_call["name"] == "add_to_info":
+                    # Extract details from tool call args
+                    details = tool_call.get("args", {}).get("details", [])
+                    if isinstance(details, list):
+                        info.extend(details)
+                    elif isinstance(details, str):
+                        info.append(details)
+                elif tool_call["name"] == "create_JSON":
+                    finished = True
+            break  # Only check the most recent AI message with tool calls
+    
+    return {"info": info, "finished": finished}
 
 def create_node(state: infoState) -> infoState:
     """The create node. Executes tools in the last message if present."""
@@ -323,19 +359,19 @@ def create_node(state: infoState) -> infoState:
                 print(f" {details}")
             response = input("Is this correct? ")
         elif tool_call["name"] == "get_info":
-            response = "\n".join(info) if info else "(no info)"
+            response = get_info.invoke({})
         elif tool_call["name"] == "create_JSON":
             print("Creating JSON...")
-            print("\n".join(info))
+            result = create_JSON.invoke({"info": info})
             created_JSON = True
-            response = randint(1,5)
+            response = str(result)
         else:
             raise NotImplementedError(f"Unknown tool call: {tool_call['name']}")
         outbound_msgs.append(
             ToolMessage(
                 content=response,
                 name=tool_call["name"],
-                tool_call_id=tool_call.get("id", 0),
+                tool_call_id=tool_call.get("id", ""),
             )
         )
 
@@ -346,16 +382,37 @@ def maybe_route_to_tools(state: infoState) -> str:
     if not (msgs:= state.get("messages", [])):
         raise ValueError(f"No messages found when parsing state: {state}")
     
-    msg = msgs[-1]
-
-    if state.get("finished", True):
+    # Check if finished first
+    if state.get("finished", False):
         return END
-    elif hasattr(msg, "tool_calls") and len(msg.tool_calls) > 0:
-        if any(tool["name"] in tool_node.tools_by_name.keys() for tool in msg.tool_calls):
+    
+    # Find the last AIMessage (not ToolMessage)
+    last_ai_msg = None
+    for msg in reversed(msgs):
+        # Check if it's an AIMessage (has type "ai" or is AIMessage instance)
+        msg_type = getattr(msg, "type", None)
+        print("#Msg Type#", msg_type)
+        if msg_type == "ai" or isinstance(msg, AIMessage) or (isinstance(msg, dict) and msg.get("type") == "ai"):
+            last_ai_msg = msg
+            break
+    
+    # If no AI message found, route to human for input
+    if not last_ai_msg:
+        print("No AI message found, routing to human")
+        return "human"
+    
+    # Check if last AI message has tool calls
+    if hasattr(last_ai_msg, "tool_calls") and last_ai_msg.tool_calls:
+        # Route to appropriate tool node
+        if any(tool["name"] in tool_node.tools_by_name.keys() for tool in last_ai_msg.tool_calls):
+            print("Tool call found, routing to tools")
             return "tools"
         else:
+            print("No tool call found, routing to creating")
             return "creating"
     else:
+        # No tool calls - need user input
+        print("No tool calls found, routing to human")
         return "human"
 
 
@@ -363,12 +420,13 @@ graph_builder = StateGraph(infoState)
 graph_builder.add_node("chatbot", chatbot_with_tools)
 graph_builder.add_node("human", human_node)
 graph_builder.add_node("tools", tool_node)
+graph_builder.add_node("update_state", update_state_after_tools)
 graph_builder.add_node("creating", create_node)
 graph_builder.add_conditional_edges("chatbot", maybe_route_to_tools)
 graph_builder.add_conditional_edges("human", maybe_exit_human_node)
 graph_builder.add_edge(START, "chatbot")
-#graph_builder.add_edge("chatbot", "human")
-graph_builder.add_edge("tools", "chatbot")
+graph_builder.add_edge("tools", "update_state")
+graph_builder.add_edge("update_state", "chatbot")
 graph_builder.add_edge("creating", "chatbot")
 
 chat_graph = graph_builder.compile()
