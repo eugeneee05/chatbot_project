@@ -1,0 +1,979 @@
+{
+  "name": "perfect (Copy)",
+  "pinned": false,
+  "createdAt": 1755594499126,
+  "preset": "",
+  "tokenCount": 1080,
+  "systemPrompt": "",
+  "messages": [
+    {
+      "versions": [
+         {
+          "type":"singleStep",
+          "role:": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "You are a professional assistant bot.\nYou must complete 4 tasks in sequence.\nFollow every rule and instruction strictly.\nDo not explain anything unless explicitly instructed.\nDo not summarize or add extra words.\nDo not combine steps.\nDo not guess any missing answers.\nAlways follow the order of tasks exactly.\nDo not answer by yourselves\n\nTASK 1: Collect User Inputs\n\nYou must ask only one question at a time, in the exact order shown below:\n1. \"Please enter the site count:\"\n2. \"Please enter the offset count:\"\n3. \"Please enter the project name:\"\n4. \"Please enter the device name:\"\n5. \"Please enter the device revision:\"\n6. \"Please enter the programme id:\"\n7. \"Please enter the programme revision:\"\n\nRULES FOR TASK 1:\n- Ask only one question at a time.\n- Wait for the user's answer before continuing.\n- Do not answer on behalf of the user.\n- Do not add any examples or explanations.\n- Respond only with: \"Got it.\"\n- Then immediately ask the next question.\n- If user enter \"1\" for site count, save it and continue the next question.\n\nYou must save all responses internally for later use.\n\nTASK 2: Generate Summary\n\nAfter collecting all 7 inputs, show the summary in this exact format:\n\nSummary of collected details:\n Site count: [siteCount]\n Offset count: [offsetCount]\n Project name: [projectName]\n Device name: [deviceName]\n Device revision: [deviceRevision]\n Programme id: [programmeId]\n Programme revision: [programmeRevision]\n\nTASK 3: Ask for confirmation\n\nAfter displaying the summary, ask:\n\n\"Is the above information correct? (yes/no)\"\n\nRULES FOR TASK 3:\n- If the user answers \"yes\" -> proceed to Task 4\n- If the user answers \"no\" -> ask: \"Which details needs to be amended?\"\n- Do not suggest or assume the answer.\n- Only amend details when the user specifies what to change.\n- After amending, show the updated summary again and ask for confirmation again.\n- Repeat until the user confirms the information is correct.\n\nTASK 4: Generate JSON Output\n\nAfter the user confirms the details are correct, generate only the final JSON in this exact structure:\n\n{\"siteCount\": [siteCount],\n \"offsetCount\": [offsetCount],\n \"projectName\": [projectName],\n \"deviceName\": [deviceName],\n \"deviceRevision\": [deviceRevision],\n \"programmeId\": [programmeId],\n \"programmeRevision\": [programmeRevision]}\n\nIMPORTANT GLOBAL RULES\n\n- Follow each task in order: Task 1 -> Task 2 -> Task 3 -> Task 4.\n- First question do not start with \"Got it\"\n- Never skip or repeat a task unless required by correction.\n- Never add extra explanation, commentary or example.\n- Respond exactly as instructed, word for word.\n- Once confirmed, produce the JSON immediately and stop.\n- When showing summaries, REPLACE placeholders like [siteCount] with the actual user inputs collected."
+         }
+
+          ],
+          "edited": true
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755510073751-0.6708343094853374",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Please enter the site count: ",
+                  "fromDraftModel": false,
+                  "tokensCount": 7
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 2.8163280278641865,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 58.467,
+                  "promptTokensCount": 554,
+                  "predictedTokensCount": 8,
+                  "totalTokensCount": 562
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755510074905-0.3251340161621912",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "6"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565618448-0.5637089380950991",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Got it. Please enter the offset count: ",
+                  "fromDraftModel": false,
+                  "tokensCount": 10
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 2.74948770170398,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 54.31,
+                  "promptTokensCount": 566,
+                  "predictedTokensCount": 11,
+                  "totalTokensCount": 577
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565620374-0.9090511155622768",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "3"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565681836-0.9764998858937048",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Got it. Please enter the project name: ",
+                  "fromDraftModel": false,
+                  "tokensCount": 10
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 3.019126606195939,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 1.535,
+                  "promptTokensCount": 581,
+                  "predictedTokensCount": 11,
+                  "totalTokensCount": 592
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565683757-0.9154138048533665",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "project1"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565720762-0.4486571580988109",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Got it. Please enter the device revision: ",
+                  "fromDraftModel": false,
+                  "tokensCount": 10
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 2.715044213014076,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 1.927,
+                  "promptTokensCount": 597,
+                  "predictedTokensCount": 11,
+                  "totalTokensCount": 608
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565722732-0.4521837305363027",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "r4"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565731519-0.35822128351158267",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Got it. Please enter the programme id: ",
+                  "fromDraftModel": false,
+                  "tokensCount": 10
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 3.0432347660024974,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 1.966,
+                  "promptTokensCount": 613,
+                  "predictedTokensCount": 11,
+                  "totalTokensCount": 624
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565733393-0.8637218549144855",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "p1234"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565743488-0.38784321740198213",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Got it. Please enter the programme revision: ",
+                  "fromDraftModel": false,
+                  "tokensCount": 10
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 3.075894222570252,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 3.213,
+                  "promptTokensCount": 630,
+                  "predictedTokensCount": 11,
+                  "totalTokensCount": 641
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565745141-0.7017968123471965",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "r6"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565756050-0.5635454706184504",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Got it.\n\nSummary of collected details:\n- Site count: 6\n- Offset count: 3\n- Project name: project1\n- Device revision: r4\n- Programme ID: p1234\n- Program revision: r6\n\nPlease confirm if the summary provided is correct or let me know any missing/wrong details to amend.",
+                  "fromDraftModel": false,
+                  "tokensCount": 71
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 2.8524068656672616,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 1.759,
+                  "promptTokensCount": 646,
+                  "predictedTokensCount": 72,
+                  "totalTokensCount": 718
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565779546-0.0868985494570289",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "yes correct"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565786207-0.8505248201748042",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Generating JSON format based on your confirmation:\n\n```json\n{\n  \"siteCount\": 6,\n  \"offsetCount\": 3,\n  \"projectName\": \"project1\",\n  \"deviceRevision\": \"r4\",\n  \"programId\": \"p1234\",\n  \"programRevision\": \"r6\"\n}\n```\n\nYour details have been successfully summarized and converted to JSON format. Is there anything else you need help with?",
+                  "fromDraftModel": false,
+                  "tokensCount": 89
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 3.0184107359155017,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 1.904,
+                  "promptTokensCount": 723,
+                  "predictedTokensCount": 90,
+                  "totalTokensCount": 813
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565814878-0.4671935430195243",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "singleStep",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "no thank you"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    },
+    {
+      "versions": [
+        {
+          "type": "multiStep",
+          "role": "assistant",
+          "senderInfo": {
+            "senderName": "phi-4-mini-instruct"
+          },
+          "steps": [
+            {
+              "type": "contentBlock",
+              "stepIdentifier": "1755565823887-0.5782685600138743",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "You're welcome! If you ever require assistance again, feel free to reach out.\n\nHave a great day!\n",
+                  "fromDraftModel": false,
+                  "tokensCount": 21
+                }
+              ],
+              "genInfo": {
+                "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+                "identifier": "phi-4-mini-instruct",
+                "loadModelConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.load.llama.cpuThreadPoolSize",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.load.contextLength",
+                      "value": 4096
+                    },
+                    {
+                      "key": "llm.load.llama.acceleration.offloadRatio",
+                      "value": 0.875
+                    },
+                    {
+                      "key": "llm.load.offloadKVCacheToGpu",
+                      "value": true
+                    }
+                  ]
+                },
+                "predictionConfig": {
+                  "fields": [
+                    {
+                      "key": "llm.prediction.promptTemplate",
+                      "value": {
+                        "type": "jinja",
+                        "jinjaPromptTemplate": {
+                          "template": "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' + message['tools'] + '<|/tool|>' + '<|end|>' }}{% else %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|end|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>' }}{% endif %}"
+                        },
+                        "stopStrings": []
+                      }
+                    },
+                    {
+                      "key": "llm.prediction.llama.cpuThreads",
+                      "value": 1
+                    },
+                    {
+                      "key": "llm.prediction.tools",
+                      "value": {
+                        "type": "none"
+                      }
+                    }
+                  ]
+                },
+                "stats": {
+                  "stopReason": "eosFound",
+                  "tokensPerSecond": 2.8842168887050446,
+                  "numGpuLayers": -1,
+                  "timeToFirstTokenSec": 3.104,
+                  "promptTokensCount": 819,
+                  "predictedTokensCount": 22,
+                  "totalTokensCount": 841
+                }
+              },
+              "defaultShouldIncludeInContext": true,
+              "shouldIncludeInContext": true
+            },
+            {
+              "type": "debugInfoBlock",
+              "stepIdentifier": "1755565829636-0.5398470185167299",
+              "debugInfo": "Conversation naming technique: 'hardcoded'"
+            }
+          ]
+        }
+      ],
+      "currentlySelected": 0
+    }
+  ],
+  "usePerChatPredictionConfig": true,
+  "perChatPredictionConfig": {
+    "fields": []
+  },
+  "clientInput": "",
+  "clientInputFiles": [],
+  "userFilesSizeBytes": 0,
+  "lastUsedModel": {
+    "indexedModelIdentifier": "unsloth/phi-4-mini-instruct-GGUF/phi-4-mini-instruct-Q5_K_M.gguf",
+    "identifier": "phi-4-mini-instruct",
+    "instanceLoadTimeConfig": {
+      "fields": []
+    },
+    "instanceOperationTimeConfig": {
+      "fields": []
+    }
+  },
+  "notes": [],
+  "plugins": [],
+  "pluginConfigs": {},
+  "disabledPluginTools": [],
+  "looseFiles": []
+}

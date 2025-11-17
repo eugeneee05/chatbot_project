@@ -1,0 +1,96 @@
+import json
+import requests
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+
+chat_sessions = {}  
+
+def load_first_instruction():
+    try:
+        with open("last_prompt.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for m in data.get("messages", []):
+            if "versions" in m and m["versions"]:
+                version = m["versions"][0]
+                if version.get("role") == "user":
+                    text_parts = []
+                    for step in version.get("content", []):
+                        if step.get("type") == "text":
+                            text_parts.append(step["text"])
+                    if not text_parts:
+                        for step in version.get("steps", []):
+                            for c in step.get("content", []):
+                                if c.get("type") == "text":
+                                    text_parts.append(c["text"])
+                    return "\n".join(text_parts).strip()
+        return ""
+    except:
+        return ""
+
+
+first_instruction = load_first_instruction()
+
+
+def call_model(history, inputs):
+    payload = {
+        "model": "phi-4-mini-instruct",
+        "messages": history
+    }
+    try:
+        response = requests.post(
+            "http://localhost:1234/v1/chat/completions", json=payload
+        )
+        response.raise_for_status()
+        data = response.json()
+        reply = data["choices"][0]["message"]["content"]
+
+        for original in inputs.values():
+            if original.lower() in reply.lower():
+                reply = replace_case_insensitive(reply, original)
+
+        return reply
+    except:
+        return "Error communicating with model."
+
+
+def replace_case_insensitive(text, original_value):
+    import re
+    return re.sub(re.escape(original_value), original_value, text, flags=re.IGNORECASE)
+
+
+@app.get("/chat/initial/{chat_id}")
+def chat_initial(chat_id: str):
+    chat_sessions[chat_id] = {
+        "history": [{"role": "system", "content": first_instruction}],
+        "inputs": {}
+    }
+
+    history = chat_sessions[chat_id]["history"]
+    inputs = chat_sessions[chat_id]["inputs"]
+
+    reply = call_model(history, inputs)
+    history.append({"role": "assistant", "content": reply})
+    return JSONResponse({"response": reply})
+
+
+@app.post("/chat/{chat_id}")
+def chat(chat_id: str, user_input: dict):
+    if chat_id not in chat_sessions:
+        return {"response": "Chat not found. Please start a new chat."}
+
+    user_message = user_input.get("text", "")
+    if not user_message.strip():
+        return {"response": "Please enter a message."}
+
+    history = chat_sessions[chat_id]["history"]
+    inputs = chat_sessions[chat_id]["inputs"]
+
+    step_number = len(inputs) + 1
+    inputs[step_number] = user_message
+    history.append({"role": "user", "content": user_message})
+
+    reply = call_model(history, inputs)
+    history.append({"role": "assistant", "content": reply})
+    return {"response": reply}
