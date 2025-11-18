@@ -103,7 +103,7 @@ def call_model(history, inputs):
     if history and hasattr(history[0], "type"):
         history = messages_to_dict(history)
     
-    print("#History#", history)
+    #print("#History#", history)
 
     payload = {
         "model": "unsloth/phi-4-mini-instruct",
@@ -151,8 +151,27 @@ WELCOME_MSG = "Welcome to the TechFlow Assistant Chatbot. Type 'q' to quit. What
 def human_node(state: infoState) -> infoState:
     """Display the last model message to the user, and receive the user's input."""
     messages = state.get("messages", [])
+
+    print("--------------------------------")
+    print("Human Node")
+    print("--------------------------------")
+    
+    # Check if the last message is already from the user - if so, don't ask for input again
     if messages:
         last_msg = messages[-1]
+        # Check if last message is from user
+        last_msg_type = getattr(last_msg, "type", None)
+        last_msg_role = None
+        if isinstance(last_msg, dict):
+            last_msg_role = last_msg.get("role")
+        elif last_msg_type == "human":
+            last_msg_role = "user"
+        
+        # If last message is already from user, skip asking for input again
+        if last_msg_role == "user":
+            print("Warning: Last message is already from user, skipping input prompt")
+            return state
+        
         print("Model:", getattr(last_msg, "content", last_msg.get("content") if isinstance(last_msg, dict) else last_msg))
     else:
         print("Model: (no message)")
@@ -165,7 +184,7 @@ def human_node(state: infoState) -> infoState:
     else:
         state["messages"].append({"role": "user", "content": user_input})
 
-    print("#Messages#", state["messages"])
+    #print("#Messages#", state["messages"])
 
     return state
 
@@ -178,15 +197,17 @@ def maybe_exit_human_node(state: infoState) -> Literal["chatbot", "__end__"]:
 
 @tool
 def get_info() -> str:
-    """Provide all the exact information that required the user to fill in."""
+    """Provide all the exact information that required the user to fill in, please show the entire information to the user."""
     return """
-Site Count:
-Offset Count:
-Project Name:
-Device Name:
-Device Revision:
-Programme Id:
-Programme Revision:
+    These are the 7 pieces of information that required the user to fill in for the project, Show the entire information to the user in this exact format:
+    Do not add any other text or information, just show the list below:
+    - Site Count
+    - Offset Count
+    - Project Name
+    - Device Name
+    - Device Revision
+    - Programme Id
+    - Programme Revision
 """
 
 @tool
@@ -244,12 +265,12 @@ def call_model_with_tools(history, tools_schema=None):
 
     # Get last message content
     last_message = getattr(history[-1], "content", "") if not isinstance(history[-1], dict) else history[-1].get("content", "")
-    print("#Last Message#", last_message)
+    #print("#Last Message#", last_message)
 
     # Call model
     reply_text, api_tool_calls = call_model(history, {"input": last_message})
 
-    print("#Reply#", reply_text)
+    #print("#Reply#", reply_text)
 
     # Format tool_calls for AIMessage
     formatted_tool_calls = []
@@ -278,12 +299,17 @@ def call_model_with_tools(history, tools_schema=None):
     return AIMessage(content=reply_text, tool_calls=formatted_tool_calls)
 
 
+
 def chatbot_with_tools(state: infoState) -> infoState:
     """
     Chatbot node: calls the model, handles tool calls automatically,
     and updates state.
     """
     defaults = {"messages": [], "info": [], "finished": False}
+
+    print("--------------------------------")
+    print("Chatbot with Tools")
+    print("--------------------------------")
 
     if state.get("messages"):
         print("A")
@@ -306,11 +332,15 @@ def chatbot_with_tools(state: infoState) -> infoState:
         new_output = AIMessage(content=WELCOME_MSG, tool_calls=[])
 
     # Append model message
-    updated_messages = state.get("messages", []) + [new_output]
+    updated_messages = state["messages"] + [
+    AIMessage(content=new_output.content, tool_calls=new_output.tool_calls)
+]
     state = {**defaults, **state, "messages": updated_messages}
 
-    print("#Updated Messages#", updated_messages)
+    #print("#Updated Messages#", updated_messages)
+    print("--------------------------------")
     print("#New State#", state)
+    print("--------------------------------")
 
     # Note: Tool calls will be handled by the tool nodes (tools/creating) based on routing
     # Don't execute tools here - let the routing function decide where to go
@@ -323,7 +353,9 @@ def update_state_after_tools(state: infoState) -> infoState:
     info = state.get("info", [])
     finished = state.get("finished", False)
 
+    print("--------------------------------")
     print("#Update State After Tools#")
+    print("--------------------------------")
     
     # Check the last AI message for tool calls to extract info
     messages = state.get("messages", [])
@@ -341,46 +373,65 @@ def update_state_after_tools(state: infoState) -> infoState:
                     finished = True
             break  # Only check the most recent AI message with tool calls
     
-    return {"info": info, "finished": finished}
+    return {**state, "info": info, "finished": finished}
+
 
 def create_node(state: infoState) -> infoState:
-    """The create node. Executes tools in the last message if present."""
-    tool_msg = state.get("messages", [])[-1]
+    """
+    Final node: Create the JSON output using the collected info.
+    No tools are invoked here.
+    """
+    messages = state.get("messages", [])
     info = state.get("info", [])
-    outbound_msgs = []
-    created_JSON = False
 
-    for tool_call in getattr(tool_msg, "tool_calls", []):
-        if tool_call["name"] == "confirm_info":
-            print("Your order:")
-            if not info:
-                print(" (no items)")
-            for details in info:
-                print(f" {details}")
-            response = input("Is this correct? ")
-        elif tool_call["name"] == "get_info":
-            response = get_info.invoke({})
-        elif tool_call["name"] == "create_JSON":
-            print("Creating JSON...")
-            result = create_JSON.invoke({"info": info})
-            created_JSON = True
-            response = str(result)
-        else:
-            raise NotImplementedError(f"Unknown tool call: {tool_call['name']}")
-        outbound_msgs.append(
-            ToolMessage(
-                content=response,
-                name=tool_call["name"],
-                tool_call_id=tool_call.get("id", ""),
-            )
+    print("--------------------------------")
+    print("Create Node")
+    print("--------------------------------")
+
+    # Create final JSON
+    result = {
+        "status": "success",
+        "details": info
+    }
+
+    # Append the AI output
+    messages.append(
+        AIMessage(
+            content=f"Here is your final JSON:\n{result}",
+            additional_kwargs={}
         )
+    )
 
-    return {"messages": outbound_msgs, "info": info, "finished": created_JSON}
+    # Mark the process as finished
+    return {
+        **state,
+        "messages": messages,
+        "info": info,
+        "finished": True
+    }
+
 
 def maybe_route_to_tools(state: infoState) -> str:
     """Route between chat and the tool nodes if a tool call is made."""
     if not (msgs:= state.get("messages", [])):
         raise ValueError(f"No messages found when parsing state: {state}")
+
+    print("--------------------------------")
+    print("Maybe Route to Tools")
+    print("--------------------------------")
+    
+    # If the latest message is from the user, the chatbot still owes a reply.
+    last_msg = msgs[-1]
+    last_role = None
+    if isinstance(last_msg, dict):
+        last_role = last_msg.get("role")
+    else:
+        last_type = getattr(last_msg, "type", None)
+        if last_type == "human":
+            last_role = "user"
+    if last_role == "user":
+        print("Latest message from user, routing to chatbot")
+        return "chatbot"
     
     # Check if finished first
     if state.get("finished", False):
@@ -391,7 +442,7 @@ def maybe_route_to_tools(state: infoState) -> str:
     for msg in reversed(msgs):
         # Check if it's an AIMessage (has type "ai" or is AIMessage instance)
         msg_type = getattr(msg, "type", None)
-        print("#Msg Type#", msg_type)
+        #print("#Msg Type#", msg_type)
         if msg_type == "ai" or isinstance(msg, AIMessage) or (isinstance(msg, dict) and msg.get("type") == "ai"):
             last_ai_msg = msg
             break
