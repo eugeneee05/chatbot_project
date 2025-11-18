@@ -65,17 +65,33 @@ tools_schema = [
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "add_to_info",
-            "description": "Add a detail provided by the user to the info list",
-            "parameters": {
-                "type": "object",
-                "properties": {"details": {"type": "array", "items": {"type": "string"}}},
-                "required": ["details"],
+    "type": "function",
+    "function": {
+        "name": "add_to_info",
+        "description": "Add all project details",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "site_count": {"type": "string"},
+                "offset_count": {"type": "string"},
+                "project_name": {"type": "string"},
+                "device_name": {"type": "string"},
+                "device_revision": {"type": "string"},
+                "programme_id": {"type": "string"},
+                "programme_revision": {"type": "string"}
             },
+            "required": [
+                "site_count",
+                "offset_count",
+                "project_name",
+                "device_name",
+                "device_revision",
+                "programme_id",
+                "programme_revision"
+            ],
         },
     },
+},
     {
         "type": "function",
         "function": {
@@ -211,33 +227,47 @@ def get_info() -> str:
 """
 
 @tool
-def add_to_info(details: Iterable[str]) -> str:
+def add_to_info(site_count: str, offset_count: str, project_name: str, device_name: str, device_revision: str, programme_id: str, programme_revision: str) -> str:
     """Adds the details to the particular information."""
-    return "Details recorded."
+    return """
+    You need to add the information to the info list exactly based on the user input, the info list is:
+    f"Site Count: {site_count}, Offset Count: {offset_count}, Project Name: {project_name}, Device Name: {device_name}, Device Revision: {device_revision}, Programme Id: {programme_id}, Programme Revision: {programme_revision}"
+    """
 
 @tool
 def confirm_info() -> str:
     """Asks the customer if the details are correct."""
-    return "Confirmation complete."
+    return """
+    You need to show all 7 information with details provided by user and ask the user whether the information is correct or not.
+    If no, ask the user which information need to be amend.
+    If yes, reply "Confirmation complete."
+    """
 
 @tool
-def create_JSON(info: list[str]) -> dict:
-    """Create a flat JSON with all user-provided details as key-value pairs."""
-    json_output = {}
-    for line in info:
-        line = line.strip()
-        # Check for different possible separators
-        if " is " in line:
-            key, value = line.split(" is ", 1)
-        elif ":" in line:
-            key, value = line.split(":", 1)
-        else:
-            # Fallback: take whole line as key
-            key, value = line, ""
-        json_output[key.strip()] = value.strip()
-    print("Generated JSON:")
-    print(json_output)
-    return json_output
+def create_JSON(
+    site_count: int,
+    offset_count: int,
+    project_name: str,
+    device_name: str,
+    device_revision: str,
+    programme_id: str,
+    programme_revision: str
+    
+) -> dict:
+    """
+    Create JSON for project creation.
+    After confirming all the details from user, you need to create a JSON.
+    Do not add any other text or information in the JSON following the exact format below:.
+    """
+    return {
+        "site_count": site_count,
+        "offset_count": offset_count,
+        "project_name": project_name,
+        "device_name": device_name,
+        "device_revision": device_revision,
+        "programme_id": programme_id,
+        "programme_revision": programme_revision,
+    }
 
 
 tools = [get_info, add_to_info, confirm_info, create_JSON]
@@ -313,11 +343,11 @@ def chatbot_with_tools(state: infoState) -> infoState:
 
     if state.get("messages"):
         print("A")
-        print("#State Messages#", state["messages"])
+        #print("#State Messages#", state["messages"])
         new_output = call_model_with_tools([ASSISTANT_SYSINT] + state["messages"], tools_schema)
 
         # --- DEBUG: print raw model reply ---
-        print("Model reply:", getattr(new_output, "content", ""))
+       # print("Model reply:", getattr(new_output, "content", ""))
         
         # --- DEBUG: show tool calls from API response ---
         print("DEBUG: Tool calls from API:")
@@ -339,7 +369,7 @@ def chatbot_with_tools(state: infoState) -> infoState:
 
     #print("#Updated Messages#", updated_messages)
     print("--------------------------------")
-    print("#New State#", state)
+    print("#New State#")
     print("--------------------------------")
 
     # Note: Tool calls will be handled by the tool nodes (tools/creating) based on routing
@@ -356,25 +386,28 @@ def update_state_after_tools(state: infoState) -> infoState:
     print("--------------------------------")
     print("#Update State After Tools#")
     print("--------------------------------")
-    
-    # Check the last AI message for tool calls to extract info
+
     messages = state.get("messages", [])
+
+    # Search backwards for the most recent AI message that has tool_calls
     for msg in reversed(messages):
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tool_call in msg.tool_calls:
+
                 if tool_call["name"] == "add_to_info":
-                    # Extract details from tool call args
-                    details = tool_call.get("args", {}).get("details", [])
-                    if isinstance(details, list):
-                        info.extend(details)
-                    elif isinstance(details, str):
-                        info.append(details)
+                    args = tool_call.get("args", {})
+
+                    # Each arg is one of the 7 project fields
+                    for key, value in args.items():
+                        # Format as "Key: Value"
+                        info.append(f"{key}: {value}")
+
                 elif tool_call["name"] == "create_JSON":
                     finished = True
-            break  # Only check the most recent AI message with tool calls
-    
-    return {**state, "info": info, "finished": finished}
 
+            break  # Only process the most recent tool call message
+
+    return {**state, "info": info, "finished": finished}
 
 def create_node(state: infoState) -> infoState:
     """
@@ -485,4 +518,7 @@ chat_graph = graph_builder.compile()
 Image(chat_graph.get_graph().draw_mermaid_png())
 
 # Invoke example
-chat_graph.invoke({})
+chat_graph.invoke(
+    {"messages": [], "info": []},
+    config={"recursion_limit": 100}
+)
