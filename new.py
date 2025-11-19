@@ -68,7 +68,7 @@ tools_schema = [
     "type": "function",
     "function": {
         "name": "add_to_info",
-        "description": "Add all project details",
+        "description": "Add all project details provided exactly from the user",
         "parameters": {
             "type": "object",
             "properties": {
@@ -96,7 +96,7 @@ tools_schema = [
         "type": "function",
         "function": {
             "name": "confirm_info",
-            "description": "Confirm the user's information",
+            "description": "Confirm the user's information without changing the details provided",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -227,18 +227,51 @@ def get_info() -> str:
 """
 
 @tool
-def add_to_info(site_count: str, offset_count: str, project_name: str, device_name: str, device_revision: str, programme_id: str, programme_revision: str) -> str:
-    """Adds the details to the particular information."""
-    return """
-    You need to add the information to the info list exactly based on the user input, the info list is:
-    f"Site Count: {site_count}, Offset Count: {offset_count}, Project Name: {project_name}, Device Name: {device_name}, Device Revision: {device_revision}, Programme Id: {programme_id}, Programme Revision: {programme_revision}"
-    """
+def add_to_info( 
+    site_count: str, 
+    offset_count: str, 
+    project_name: str, 
+    device_name: str, 
+    device_revision: str, 
+    programme_id: str, 
+    programme_revision: str
+) -> str:
+    """Adds the details to the particular information, with validation."""
+
+    errors = []
+
+    # Validation rules
+    if not site_count or not site_count.isdigit():
+        errors.append("site_count must be a number.")
+    if not offset_count or not offset_count.isdigit():
+        errors.append("offset_count must be a number.")
+    if not project_name.strip():
+        errors.append("project_name is required.")
+    if not device_name.strip():
+        errors.append("device_name is required.")
+    if not device_revision.strip():
+        errors.append("device_revision is required.")
+    if not programme_id.strip():
+        errors.append("programme_id is required.")
+    if not programme_revision.strip():
+        errors.append("programme_revision is required.")
+
+    # If errors exist → return structured error message
+    if errors:
+        return f'{{"status":"error","errors":{errors}}}'
+
+    # If validation passed → return success with info
+    info_string = f"Site Count: {site_count}, Offset Count: {offset_count}, Project Name: {project_name}, Device Name: {device_name}, Device Revision: {device_revision}, Programme Id: {programme_id}, Programme Revision: {programme_revision}"
+    
+    return f'{{"status":"success","info":"{info_string}"}}'
+
 
 @tool
 def confirm_info() -> str:
     """Asks the customer if the details are correct."""
     return """
-    You need to show all 7 information with details provided by user and ask the user whether the information is correct or not.
+    You need to show all 7 information with details provided by user: , site count, offset count, project name, device name, device revision, programme id, programme revision.
+    Ask the user whether the information is correct or not.
     If no, ask the user which information need to be amend.
     If yes, reply "Confirmation complete."
     """
@@ -257,7 +290,8 @@ def create_JSON(
     """
     Create JSON for project creation.
     After confirming all the details from user, you need to create a JSON.
-    Do not add any other text or information in the JSON following the exact format below:.
+    Do not change the details provided by the user.
+    Do not add any other text or information in the JSON following the exact format below:
     """
     return {
         "site_count": site_count,
