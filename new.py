@@ -22,6 +22,18 @@ from langchain_core.messages import ToolMessage
 
 app = FastAPI()
 
+# ----- GLOBAL PROJECT INFO DICTIONARY FOR ALL 7 INFORMATION FIELDS -----
+PROJECT_INFO = {
+    "site_count": "",
+    "offset_count": "",
+    "project_name": "",
+    "device_name": "",
+    "device_revision": "",
+    "programme_id": "",
+    "programme_revision": "",
+}
+# ----------------------------------------------------------------------
+
 class infoState(TypedDict):
     """State representing the customer's order conversation."""
     messages: Annotated[list, add_messages]
@@ -119,8 +131,6 @@ def call_model(history, inputs):
     if history and hasattr(history[0], "type"):
         history = messages_to_dict(history)
     
-    #print("#History#", history)
-
     payload = {
         "model": "unsloth/phi-4-mini-instruct",
         "messages": convert_messages_to_dict(history),
@@ -136,7 +146,7 @@ def call_model(history, inputs):
         data = response.json()
         message = data["choices"][0]["message"]
         reply = message.get("content", "") or ""
-        tool_calls = message.get("tool_calls", [])
+        tool_calls = message.get("tool_calls", [])  # external API tool_calls format
 
         for original in inputs.values():
             if original.lower() in reply.lower():
@@ -148,7 +158,7 @@ def call_model(history, inputs):
         if hasattr(e, 'response') and e.response is not None:
             print(e.response.text)
         return f"Error communicating with model: {e}", []
-    
+
 ASSISTANT_SYSINT = {
     "role":"system",
     "content": (
@@ -200,8 +210,6 @@ def human_node(state: infoState) -> infoState:
     else:
         state["messages"].append({"role": "user", "content": user_input})
 
-    #print("#Messages#", state["messages"])
-
     return state
 
 def maybe_exit_human_node(state: infoState) -> Literal["chatbot", "__end__"]:
@@ -214,6 +222,8 @@ def maybe_exit_human_node(state: infoState) -> Literal["chatbot", "__end__"]:
 @tool
 def get_info() -> str:
     """Provide all the exact information that required the user to fill in, please show the entire information to the user."""
+
+    print ("Get info....")
     return """
     These are the 7 pieces of information that required the user to fill in for the project, Show the entire information to the user in this exact format:
     Do not add any other text or information, just show the list below:
@@ -238,6 +248,7 @@ def add_to_info(
 ) -> str:
     """Adds the details to the particular information, with validation."""
 
+    print ("Add to info....")
     errors = []
 
     # Validation rules
@@ -260,8 +271,21 @@ def add_to_info(
     if errors:
         return f'{{"status":"error","errors":{errors}}}'
 
-    # If validation passed → return success with info
-    info_string = f"Site Count: {site_count}, Offset Count: {offset_count}, Project Name: {project_name}, Device Name: {device_name}, Device Revision: {device_revision}, Programme Id: {programme_id}, Programme Revision: {programme_revision}"
+    # If validation passed → store into the global PROJECT_INFO dict
+    PROJECT_INFO["site_count"] = site_count
+    PROJECT_INFO["offset_count"] = offset_count
+    PROJECT_INFO["project_name"] = project_name
+    PROJECT_INFO["device_name"] = device_name
+    PROJECT_INFO["device_revision"] = device_revision
+    PROJECT_INFO["programme_id"] = programme_id
+    PROJECT_INFO["programme_revision"] = programme_revision
+
+    # Return success
+    info_string = (
+        f"Site Count: {site_count}, Offset Count: {offset_count}, Project Name: {project_name}, "
+        f"Device Name: {device_name}, Device Revision: {device_revision}, Programme Id: {programme_id}, "
+        f"Programme Revision: {programme_revision}"
+    )
     
     return f'{{"status":"success","info":"{info_string}"}}'
 
@@ -269,22 +293,33 @@ def add_to_info(
 @tool
 def confirm_info() -> str:
     """Asks the customer if the details are correct."""
-    return """
+    print ("Confirm info")
+
+    return f"""
     You need to show all 7 information with details provided by user: , site count, offset count, project name, device name, device revision, programme id, programme revision.
     Ask the user whether the information is correct or not.
     If no, ask the user which information need to be amend.
     If yes, reply "Confirmation complete."
+
+    Current values:
+    - Site Count: {PROJECT_INFO.get("site_count")}
+    - Offset Count: {PROJECT_INFO.get("offset_count")}
+    - Project Name: {PROJECT_INFO.get("project_name")}
+    - Device Name: {PROJECT_INFO.get("device_name")}
+    - Device Revision: {PROJECT_INFO.get("device_revision")}
+    - Programme Id: {PROJECT_INFO.get("programme_id")}
+    - Programme Revision: {PROJECT_INFO.get("programme_revision")}
     """
 
 @tool
 def create_JSON(
-    site_count: int,
-    offset_count: int,
-    project_name: str,
-    device_name: str,
-    device_revision: str,
-    programme_id: str,
-    programme_revision: str
+    site_count: int = None,
+    offset_count: int = None,
+    project_name: str = None,
+    device_name: str = None,
+    device_revision: str = None,
+    programme_id: str = None,
+    programme_revision: str = None
     
 ) -> dict:
     """
@@ -293,14 +328,17 @@ def create_JSON(
     Do not change the details provided by the user.
     Do not add any other text or information in the JSON following the exact format below:
     """
+    # Keep docstring unchanged.
+
+    # Return JSON exactly using stored PROJECT_INFO values
     return {
-        "site_count": site_count,
-        "offset_count": offset_count,
-        "project_name": project_name,
-        "device_name": device_name,
-        "device_revision": device_revision,
-        "programme_id": programme_id,
-        "programme_revision": programme_revision,
+        "site_count": PROJECT_INFO.get("site_count"),
+        "offset_count": PROJECT_INFO.get("offset_count"),
+        "project_name": PROJECT_INFO.get("project_name"),
+        "device_name": PROJECT_INFO.get("device_name"),
+        "device_revision": PROJECT_INFO.get("device_revision"),
+        "programme_id": PROJECT_INFO.get("programme_id"),
+        "programme_revision": PROJECT_INFO.get("programme_revision"),
     }
 
 
@@ -316,25 +354,11 @@ def call_model_with_tools(history, tools_schema=None):
     if history and hasattr(history[0], "type"):
         history = messages_to_dict(history)
 
-    # Add tool info to system context
-    # if tools_schema:
-    #     tool_descriptions = "\n".join(
-    #         [f"- {t['function']['name']}: {t['function']['description']}" for t in tools_schema]
-    #     )
-    #     system_message = {
-    #         "role": "system",
-    #         "content": f"You have access to these tools:\n{tool_descriptions}\nCall them when relevant."
-    #     }
-    #     history = [system_message] + history
-
     # Get last message content
     last_message = getattr(history[-1], "content", "") if not isinstance(history[-1], dict) else history[-1].get("content", "")
-    #print("#Last Message#", last_message)
 
     # Call model
     reply_text, api_tool_calls = call_model(history, {"input": last_message})
-
-    #print("#Reply#", reply_text)
 
     # Format tool_calls for AIMessage
     formatted_tool_calls = []
@@ -376,12 +400,10 @@ def chatbot_with_tools(state: infoState) -> infoState:
     print("--------------------------------")
 
     if state.get("messages"):
-        print("A")
-        #print("#State Messages#", state["messages"])
         new_output = call_model_with_tools([ASSISTANT_SYSINT] + state["messages"], tools_schema)
 
         # --- DEBUG: print raw model reply ---
-       # print("Model reply:", getattr(new_output, "content", ""))
+        # print("Model reply:", getattr(new_output, "content", ""))
         
         # --- DEBUG: show tool calls from API response ---
         print("DEBUG: Tool calls from API:")
@@ -397,17 +419,9 @@ def chatbot_with_tools(state: infoState) -> infoState:
 
     # Append model message
     updated_messages = state["messages"] + [
-    AIMessage(content=new_output.content, tool_calls=new_output.tool_calls)
-]
+        AIMessage(content=new_output.content, tool_calls=new_output.tool_calls)
+    ]
     state = {**defaults, **state, "messages": updated_messages}
-
-    #print("#Updated Messages#", updated_messages)
-    print("--------------------------------")
-    print("#New State#")
-    print("--------------------------------")
-
-    # Note: Tool calls will be handled by the tool nodes (tools/creating) based on routing
-    # Don't execute tools here - let the routing function decide where to go
 
     return state
 
@@ -417,10 +431,6 @@ def update_state_after_tools(state: infoState) -> infoState:
     info = state.get("info", [])
     finished = state.get("finished", False)
 
-    print("--------------------------------")
-    print("#Update State After Tools#")
-    print("--------------------------------")
-
     messages = state.get("messages", [])
 
     # Search backwards for the most recent AI message that has tool_calls
@@ -428,24 +438,28 @@ def update_state_after_tools(state: infoState) -> infoState:
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tool_call in msg.tool_calls:
 
+                # Only append summary if not already present
                 if tool_call["name"] == "add_to_info":
                     args = tool_call.get("args", {})
-
-                    # Each arg is one of the 7 project fields
-                    for key, value in args.items():
-                        # Format as "Key: Value"
-                        info.append(f"{key}: {value}")
+                    summary = ", ".join(
+                        f"{key}: {args.get(key, PROJECT_INFO.get(key, ''))}" 
+                        for key in PROJECT_INFO
+                    )
+                    if summary not in info:
+                        info.append(summary)
 
                 elif tool_call["name"] == "create_JSON":
-                    finished = True
+                    finished = True  # Mark finished immediately
 
             break  # Only process the most recent tool call message
 
     return {**state, "info": info, "finished": finished}
 
+
 def create_node(state: infoState) -> infoState:
     """
-    Final node: Create the JSON output using the collected info.
+    Final node: Create the JSON output using the collected info. 
+    You are required to create JSON with site count, offset count, project name, device name, device revision, programme id and programme revision.
     No tools are invoked here.
     """
     messages = state.get("messages", [])
@@ -458,7 +472,16 @@ def create_node(state: infoState) -> infoState:
     # Create final JSON
     result = {
         "status": "success",
-        "details": info
+        "details": info,
+        "project_json": {
+            "site_count": PROJECT_INFO.get("site_count"),
+            "offset_count": PROJECT_INFO.get("offset_count"),
+            "project_name": PROJECT_INFO.get("project_name"),
+            "device_name": PROJECT_INFO.get("device_name"),
+            "device_revision": PROJECT_INFO.get("device_revision"),
+            "programme_id": PROJECT_INFO.get("programme_id"),
+            "programme_revision": PROJECT_INFO.get("programme_revision"),
+        }
     }
 
     # Append the AI output
@@ -480,58 +503,29 @@ def create_node(state: infoState) -> infoState:
 
 def maybe_route_to_tools(state: infoState) -> str:
     """Route between chat and the tool nodes if a tool call is made."""
-    if not (msgs:= state.get("messages", [])):
-        raise ValueError(f"No messages found when parsing state: {state}")
+    msgs = state.get("messages", [])
+    if not msgs:
+        return "human"
 
-    print("--------------------------------")
-    print("Maybe Route to Tools")
-    print("--------------------------------")
-    
-    # If the latest message is from the user, the chatbot still owes a reply.
-    last_msg = msgs[-1]
-    last_role = None
-    if isinstance(last_msg, dict):
-        last_role = last_msg.get("role")
+    last = msgs[-1]
+
+    # Determine role
+    if isinstance(last, dict):
+        role = last.get("role")
     else:
-        last_type = getattr(last_msg, "type", None)
-        if last_type == "human":
-            last_role = "user"
-    if last_role == "user":
-        print("Latest message from user, routing to chatbot")
+        t = getattr(last, "type", None)
+        role = "user" if t == "human" else "assistant"
+
+    # If user spoke → chatbot must reply
+    if role == "user":
         return "chatbot"
-    
-    # Check if finished first
-    if state.get("finished", False):
-        return END
-    
-    # Find the last AIMessage (not ToolMessage)
-    last_ai_msg = None
-    for msg in reversed(msgs):
-        # Check if it's an AIMessage (has type "ai" or is AIMessage instance)
-        msg_type = getattr(msg, "type", None)
-        #print("#Msg Type#", msg_type)
-        if msg_type == "ai" or isinstance(msg, AIMessage) or (isinstance(msg, dict) and msg.get("type") == "ai"):
-            last_ai_msg = msg
-            break
-    
-    # If no AI message found, route to human for input
-    if not last_ai_msg:
-        print("No AI message found, routing to human")
-        return "human"
-    
-    # Check if last AI message has tool calls
-    if hasattr(last_ai_msg, "tool_calls") and last_ai_msg.tool_calls:
-        # Route to appropriate tool node
-        if any(tool["name"] in tool_node.tools_by_name.keys() for tool in last_ai_msg.tool_calls):
-            print("Tool call found, routing to tools")
-            return "tools"
-        else:
-            print("No tool call found, routing to creating")
-            return "creating"
-    else:
-        # No tool calls - need user input
-        print("No tool calls found, routing to human")
-        return "human"
+
+    # If assistant spoke:
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        return "tools"
+
+    # Assistant spoke and did NOT call tools → wait for user
+    return "human"
 
 
 graph_builder = StateGraph(infoState)
