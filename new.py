@@ -10,10 +10,9 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from IPython.display import Image, display
 from pprint import pprint
-from langchain_core.messages.ai import AIMessage
 from langchain_core.messages import messages_to_dict
 from typing import Literal
 from collections.abc import Iterable
@@ -162,12 +161,13 @@ def call_model(history, inputs):
 ASSISTANT_SYSINT = {
     "role":"system",
     "content": (
-        "You are an AssistantBot, an interactive create project system. "
-        "You will ask the human which action he want to perform."
+        "You are an AssistantBot, an interactive create project system.\n"
+        "You will ask the human which action he want to perform.\n"
         "If human say they want to create project, "
         "call get_info tool to show the list that required to fill in by them. "
-        "\n\nAdd the details provided into add_to_info. "
-        "Always call confirm_info to confirm with the user before calling create_JSON. Once create_JSON has returned, "
+        "After human fill in all the information, call add_to_info to add exactly the details into the variable."
+        "After adding the information, call confirm_info to get confirmation from human, you need to wait human to agree with the details you show, then only "
+        "call create_JSON. Once create_JSON has returned, "
         "thank the user and say goodbye!"
     )
 }
@@ -182,33 +182,31 @@ def human_node(state: infoState) -> infoState:
     print("Human Node")
     print("--------------------------------")
     
-    # Check if the last message is already from the user - if so, don't ask for input again
+    # Always show the last assistant message (if any)
     if messages:
-        last_msg = messages[-1]
-        # Check if last message is from user
-        last_msg_type = getattr(last_msg, "type", None)
-        last_msg_role = None
-        if isinstance(last_msg, dict):
-            last_msg_role = last_msg.get("role")
-        elif last_msg_type == "human":
-            last_msg_role = "user"
-        
-        # If last message is already from user, skip asking for input again
-        if last_msg_role == "user":
-            print("Warning: Last message is already from user, skipping input prompt")
-            return state
-        
-        print("Model:", getattr(last_msg, "content", last_msg.get("content") if isinstance(last_msg, dict) else last_msg))
+        # Find the last assistant message to display
+        for msg in reversed(messages):
+            if isinstance(msg, dict):
+                role = msg.get("role")
+                content = msg.get("content", "")
+            else:
+                role = "assistant" if getattr(msg, "type", None) == "ai" else "user"
+                content = getattr(msg, "content", "")
+            
+            if role == "assistant":
+                print("Model:", content)
+                break
     else:
         print("Model: (no message)")
 
+    # Always get user input when we reach human node
     user_input = input("User: ")
 
     if user_input.lower() in {"q", "quit", "exit", "goodbye"}:
         state["finished"] = True
-        state["messages"].append({"role": "user", "content": "goodbye"})
+        state["messages"].append(HumanMessage(content="goodbye"))
     else:
-        state["messages"].append({"role": "user", "content": user_input})
+        state["messages"].append(HumanMessage(content=user_input))
 
     return state
 
@@ -507,24 +505,24 @@ def maybe_route_to_tools(state: infoState) -> str:
     if not msgs:
         return "human"
 
-    last = msgs[-1]
+    last_msg = msgs[-1]
 
-    # Determine role
-    if isinstance(last, dict):
-        role = last.get("role")
+    # Determine role of last message
+    if isinstance(last_msg, dict):
+        role = last_msg.get("role")
     else:
-        t = getattr(last, "type", None)
-        role = "user" if t == "human" else "assistant"
+        msg_type = getattr(last_msg, "type", None)
+        role = "user" if msg_type == "human" else "assistant"
 
-    # If user spoke → chatbot must reply
+    # If last message is from user → chatbot should respond
     if role == "user":
         return "chatbot"
 
-    # If assistant spoke:
-    if hasattr(last, "tool_calls") and last.tool_calls:
+    # If last message is from assistant and has tool calls → route to tools
+    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
         return "tools"
 
-    # Assistant spoke and did NOT call tools → wait for user
+    # If last message is from assistant without tool calls → wait for human input
     return "human"
 
 
@@ -539,14 +537,16 @@ graph_builder.add_conditional_edges("human", maybe_exit_human_node)
 graph_builder.add_edge(START, "chatbot")
 graph_builder.add_edge("tools", "update_state")
 graph_builder.add_edge("update_state", "chatbot")
-graph_builder.add_edge("creating", "chatbot")
+graph_builder.add_edge("creating", END)
 
 chat_graph = graph_builder.compile()
 
 Image(chat_graph.get_graph().draw_mermaid_png())
 
-# Invoke example
-chat_graph.invoke(
-    {"messages": [], "info": []},
-    config={"recursion_limit": 100}
-)
+# Initialize the conversation state
+initial_state = {"messages": [], "info": []}
+
+# Start the graph execution
+chat_graph.invoke(initial_state, config={"recursion_limit": 100})
+
+
