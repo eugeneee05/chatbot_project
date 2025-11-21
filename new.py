@@ -164,10 +164,12 @@ ASSISTANT_SYSINT = {
         "You are an AssistantBot, an interactive create project system.\n"
         "You will ask the human which action he want to perform.\n"
         "If human say they want to create project, "
-        "call get_info tool to show the list that required to fill in by them. "
-        "After human fill in all the information, call add_to_info to add exactly the details into the variable."
-        "After adding the information, call confirm_info to get confirmation from human, you need to wait human to agree with the details you show, then only "
-        "call create_JSON. Once create_JSON has returned, "
+        "directly call get_info tool to show the list that required to fill in by them.\n"
+        "You must call add_to_info first to add the details.\n "
+        "You only call add_to_info once per input."
+        "After adding the information, you must call confirm_info, show the summary to get confirmation from human."
+        "Wait human to agree with the details you show, then only "
+        "call create_JSON. You need to return the created JSON to the user. Then, "
         "thank the user and say goodbye!"
     )
 }
@@ -294,7 +296,7 @@ def confirm_info() -> str:
     print ("Confirm info")
 
     return f"""
-    You need to show all 7 information with details provided by user: , site count, offset count, project name, device name, device revision, programme id, programme revision.
+    You must to show all 7 information together with details provided by user: , site count, offset count, project name, device name, device revision, programme id, programme revision.
     Ask the user whether the information is correct or not.
     If no, ask the user which information need to be amend.
     If yes, reply "Confirmation complete."
@@ -321,10 +323,10 @@ def create_JSON(
     
 ) -> dict:
     """
-    Create JSON for project creation.
-    After confirming all the details from user, you need to create a JSON.
-    Do not change the details provided by the user.
-    Do not add any other text or information in the JSON following the exact format below:
+    Create JSON for project creation.\n
+    After confirming all the details from user,
+    You need to retrieve the details from global variable and create the JSON using the detail."\n
+    Show the JSON to the user.
     """
     # Keep docstring unchanged.
 
