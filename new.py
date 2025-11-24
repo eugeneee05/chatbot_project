@@ -8,7 +8,7 @@ from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from IPython.display import Image, display
@@ -223,6 +223,7 @@ def maybe_exit_human_node(state: infoState) -> Literal["chatbot", "__end__"]:
 @tool
 def get_info() -> str:
     """Provide all the exact information that required the user to fill in, please show the entire information to the user."""
+
     print ("Get info....")
     return """
     These are the 7 pieces of information that required the user to fill in for the project, Show the entire information to the user in this exact format:
@@ -247,6 +248,7 @@ def add_to_info(
     programme_revision: str
 ) -> str:
     """Adds the details to the particular information, with validation."""
+
     print ("Add to info....")
     errors = []
 
@@ -287,6 +289,7 @@ def add_to_info(
     )
     
     return f'{{"status":"success","info":"{info_string}"}}'
+
 
 @tool
 def confirm_info() -> str:
@@ -339,8 +342,10 @@ def create_JSON(
         "programme_revision": PROJECT_INFO.get("programme_revision"),
     }
 
+
 tools = [get_info, add_to_info, confirm_info, create_JSON]
 tool_node = ToolNode(tools)
+
 
 def call_model_with_tools(history, tools_schema=None):
     """
@@ -382,6 +387,8 @@ def call_model_with_tools(history, tools_schema=None):
 
     return AIMessage(content=reply_text, tool_calls=formatted_tool_calls)
 
+
+
 def chatbot_with_tools(state: infoState) -> infoState:
     """
     Chatbot node: calls the model, handles tool calls automatically,
@@ -419,6 +426,7 @@ def chatbot_with_tools(state: infoState) -> infoState:
 
     return state
 
+
 def update_state_after_tools(state: infoState) -> infoState:
     """Update state after tool execution - extract info from tool calls and update state."""
     info = state.get("info", [])
@@ -447,6 +455,7 @@ def update_state_after_tools(state: infoState) -> infoState:
             break  # Only process the most recent tool call message
 
     return {**state, "info": info, "finished": finished}
+
 
 def create_node(state: infoState) -> infoState:
     """
@@ -492,6 +501,7 @@ def create_node(state: infoState) -> infoState:
         "finished": True
     }
 
+
 def maybe_route_to_tools(state: infoState) -> str:
     """Route between chat and the tool nodes if a tool call is made."""
     msgs = state.get("messages", [])
@@ -518,6 +528,7 @@ def maybe_route_to_tools(state: infoState) -> str:
     # If last message is from assistant without tool calls → wait for human input
     return "human"
 
+
 graph_builder = StateGraph(infoState)
 graph_builder.add_node("chatbot", chatbot_with_tools)
 graph_builder.add_node("human", human_node)
@@ -538,138 +549,7 @@ Image(chat_graph.get_graph().draw_mermaid_png())
 # Initialize the conversation state
 initial_state = {"messages": [], "info": []}
 
-# NOTE: removed the one-time interactive invocation (chat_graph.invoke(initial_state))
-# in order to operate via HTTP endpoints for the frontend integration.
+# Start the graph execution
+chat_graph.invoke(initial_state, config={"recursion_limit": 100})
 
-# ----------------- New REST endpoints for frontend integration -----------------
 
-def _ensure_session(chat_id: str):
-    """Create a fresh session if not exists."""
-    if chat_id not in chat_session:
-        chat_session[chat_id] = {
-            "messages": [],     # list of dicts: {"role": "user"|"assistant"|"tool", "content": "..."}
-            "final_data": None, # will hold final JSON when create_JSON executed
-        }
-
-def _execute_tool_call(tool_call):
-    """
-    Execute a tool call returned by the model.
-    tool_call is expected to be a dict with keys: id, name, args (dict)
-    Returns (tool_output_str_or_dict, tool_role_message_dict)
-    """
-    name = tool_call.get("name")
-    args = tool_call.get("args", {}) or {}
-    try:
-        if name == "get_info":
-            out = get_info()
-            return out, {"role": "tool", "content": out}
-        elif name == "add_to_info":
-            # call with explicit named params
-            out = add_to_info(
-                site_count=args.get("site_count", ""),
-                offset_count=args.get("offset_count", ""),
-                project_name=args.get("project_name", ""),
-                device_name=args.get("device_name", ""),
-                device_revision=args.get("device_revision", ""),
-                programme_id=args.get("programme_id", ""),
-                programme_revision=args.get("programme_revision", ""),
-            )
-            # If tool returns a JSON-like string for status success with info, keep as string
-            return out, {"role": "tool", "content": out}
-        elif name == "confirm_info":
-            out = confirm_info()
-            return out, {"role": "tool", "content": out}
-        elif name == "create_JSON":
-            # create_JSON returns a dict using PROJECT_INFO
-            out = create_JSON()
-            # store final data into session
-            return out, {"role": "tool", "content": json.dumps(out)}
-        else:
-            return {"error": f"Unknown tool {name}"}, {"role": "tool", "content": f"Unknown tool {name}"}
-    except Exception as e:
-        return {"error": str(e)}, {"role": "tool", "content": f"Tool {name} error: {e}"}
-
-@app.get("/chat/initial/{chat_id}")
-def chat_initial(chat_id: str):
-    """
-    Initialize a chat session and return the assistant's initial message.
-    """
-    _ensure_session(chat_id)
-    session = chat_session[chat_id]
-
-    # Start by sending the assistant welcome message (no model call required)
-    assistant_msg = {"role": "assistant", "content": WELCOME_MSG, "tool_calls": []}
-    session["messages"].append(assistant_msg)
-
-    return JSONResponse({"response": WELCOME_MSG, "state": {"messages": session["messages"]}})
-
-@app.post("/chat/{chat_id}")
-def chat_api(chat_id: str, payload: dict):
-    """
-    Endpoint for frontend to send a user message and receive model reply.
-    Expects payload: {"text": "<user message>"}
-    Returns: {"response": "<assistant reply>", "summary_json": <final json if available>, "state": {"messages": [...]}}
-    """
-    if "text" not in payload:
-        raise HTTPException(status_code=400, detail="Missing 'text' in request body.")
-
-    _ensure_session(chat_id)
-    session = chat_session[chat_id]
-    user_text = str(payload.get("text", "")).strip()
-
-    # Append user message
-    user_msg = {"role": "user", "content": user_text}
-    session["messages"].append(user_msg)
-
-    # Build history to send to model: include system instruction and conversation messages
-    history = [ASSISTANT_SYSINT] + session["messages"]
-
-    # Call model
-    reply_text, api_tool_calls = call_model(history, {"input": user_text})
-
-    # Prepare assistant message dict, include tool_calls if any
-    assistant_msg = {"role": "assistant", "content": reply_text, "tool_calls": []}
-    session["messages"].append(assistant_msg)
-
-    # If model requested tool calls, execute them sequentially
-    final_data = session.get("final_data")
-    tool_results = []
-    if api_tool_calls:
-        # api_tool_calls expected from call_model to be a list of dicts with 'function' details.
-        # call_model returns the raw tool_calls; earlier call_model_with_tools reformatted them.
-        # The format here is: each tc has a "function" mapping with "name" and "arguments".
-        for raw_tc in api_tool_calls:
-            # Normalize to {name, args}
-            function_info = raw_tc.get("function", {})
-            tc_name = function_info.get("name") or raw_tc.get("name")
-            tc_args = function_info.get("arguments", {}) or raw_tc.get("arguments", {}) or {}
-            normalized = {"id": raw_tc.get("id", ""), "name": tc_name, "args": tc_args}
-
-            tool_output, tool_message = _execute_tool_call({"name": normalized["name"], "args": normalized["args"]})
-            # Append tool message to session messages
-            session["messages"].append(tool_message)
-
-            # If create_JSON produced a dict/object, save it
-            if normalized["name"] == "create_JSON":
-                # tool_output should be a dict
-                if isinstance(tool_output, dict):
-                    session["final_data"] = tool_output
-                    final_data = tool_output
-                else:
-                    # try to parse JSON
-                    try:
-                        parsed = json.loads(tool_output)
-                        session["final_data"] = parsed
-                        final_data = parsed
-                    except:
-                        pass
-
-            tool_results.append({"name": normalized["name"], "output": tool_output})
-
-    # Return assistant reply and final JSON (if available)
-    return JSONResponse({
-        "response": reply_text,
-        "summary_json": session.get("final_data"),
-        "state": {"messages": session["messages"]},
-        "tool_results": tool_results
-    })
