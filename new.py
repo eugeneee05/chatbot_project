@@ -8,7 +8,7 @@ from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from IPython.display import Image, display
@@ -117,11 +117,7 @@ tools_schema = [
         "function": {
             "name": "create_JSON",
             "description": "Generate a JSON object with all user-provided info",
-            "parameters": {
-                "type": "object",
-                "properties": {"info": {"type": "array", "items": {"type": "string"}}},
-                "required": ["info"],
-            },
+            "parameters": {"type": "object", "properties": {}, "required": []},  # Fixed: no parameters needed
         },
     },
 ]
@@ -167,11 +163,12 @@ ASSISTANT_SYSINT = {
         "If human say they want to create project, "
         "directly call get_info tool to show the list that required to fill in by them.\n"
         "You must call add_to_info first to add the details.\n "
-        "You only call add_to_info once per input."
-        "After adding the information, you must call confirm_info, show the summary to get confirmation from human."
+        "After adding the information, you MUST immediately call confirm_info to show the summary to get confirmation from human.\n"
         "Wait human to agree with the details you show, then only "
         "call create_JSON. You need to return the created JSON to the user. Then, "
-        "thank the user and say goodbye!"
+        "thank the user and say goodbye!\n"
+        "WORKFLOW: get_info -> add_to_info -> confirm_info -> create_JSON\n"
+        "After add_to_info is successfully executed, you MUST call confirm_info immediately without waiting for user input."
     )
 }
 
@@ -313,24 +310,13 @@ def confirm_info() -> str:
     """
 
 @tool
-def create_JSON(
-    site_count: int = None,
-    offset_count: int = None,
-    project_name: str = None,
-    device_name: str = None,
-    device_revision: str = None,
-    programme_id: str = None,
-    programme_revision: str = None
-    
-) -> dict:
+def create_JSON() -> dict:  # Remove parameters
     """
     Create JSON for project creation.\n
     After confirming all the details from user,
     You need to retrieve the details from global variable and create the JSON using the detail."\n
     Show the JSON to the user.
     """
-    # Keep docstring unchanged.
-
     # Return JSON exactly using stored PROJECT_INFO values
     return {
         "site_count": PROJECT_INFO.get("site_count"),
@@ -462,6 +448,7 @@ def create_node(state: infoState) -> infoState:
     Final node: Create the JSON output using the collected info. 
     You are required to create JSON with site count, offset count, project name, device name, device revision, programme id and programme revision.
     No tools are invoked here.
+    You need to return the JSON only.
     """
     messages = state.get("messages", [])
     info = state.get("info", [])
@@ -500,6 +487,7 @@ def create_node(state: infoState) -> infoState:
         "info": info,
         "finished": True
     }
+
 
 
 def maybe_route_to_tools(state: infoState) -> str:
@@ -549,7 +537,227 @@ Image(chat_graph.get_graph().draw_mermaid_png())
 # Initialize the conversation state
 initial_state = {"messages": [], "info": []}
 
-# Start the graph execution
-chat_graph.invoke(initial_state, config={"recursion_limit": 100})
+# ----------------- New REST endpoints for frontend integration -----------------
 
+def _ensure_session(chat_id: str):
+    """Create a fresh session if not exists."""
+    if chat_id not in chat_session:
+        chat_session[chat_id] = {
+            "messages": [],     # list of dicts: {"role": "user"|"assistant"|"tool", "content": "..."}
+            "final_data": None, # will hold final JSON when create_JSON executed
+            "awaiting_confirmation": False,  # Track if we're waiting for user confirmation
+        }
 
+def _execute_tool_call(tool_call, chat_id=None):
+    """
+    Execute a tool call returned by the model.
+    tool_call is expected to be a dict with keys: id, name, args (dict)
+    Returns (tool_output_str_or_dict, tool_role_message_dict)
+    """
+    name = tool_call.get("name")
+    args = tool_call.get("args", {}) or {}
+    
+    try:
+        # Find the corresponding tool from the tools list
+        tool_obj = None
+        for tool in tools:
+            if tool.name == name:
+                tool_obj = tool
+                break
+        
+        if tool_obj is None:
+            error_msg = f"Unknown tool {name}"
+            return error_msg, {"role": "tool", "content": error_msg}
+        
+        # Invoke the tool with the arguments
+        if name == "get_info" or name == "confirm_info" or name == "create_JSON":
+            # These tools take no arguments
+            out = tool_obj.invoke({})
+        else:
+            # These tools take arguments
+            out = tool_obj.invoke(args)
+        
+        # Special handling for create_JSON to store final data
+        if name == "create_JSON" and chat_id:
+            if isinstance(out, dict):
+                chat_session[chat_id]["final_data"] = out
+        
+        # Convert output to string for tool message
+        if isinstance(out, (dict, list)):
+            tool_content = json.dumps(out)
+        else:
+            tool_content = str(out)
+            
+        return out, {"role": "tool", "content": tool_content}
+        
+    except Exception as e:
+        error_msg = f"Tool {name} error: {e}"
+        return error_msg, {"role": "tool", "content": error_msg}
+
+@app.get("/chat/initial/{chat_id}")
+def chat_initial(chat_id: str):
+    """
+    Initialize a chat session and return the assistant's initial message.
+    """
+    _ensure_session(chat_id)
+    session = chat_session[chat_id]
+
+    # Start by sending the assistant welcome message (no model call required)
+    assistant_msg = {"role": "assistant", "content": WELCOME_MSG, "tool_calls": []}
+    session["messages"].append(assistant_msg)
+
+    return JSONResponse({"response": WELCOME_MSG, "state": {"messages": session["messages"]}})
+
+@app.post("/chat/{chat_id}")
+def chat_api(chat_id: str, payload: dict):
+    """
+    Endpoint for frontend to send a user message and receive model reply.
+    Expects payload: {"text": "<user message>"}
+    Returns: {"response": "<assistant reply>", "summary_json": <final json if available>, "state": {"messages": [...]}}
+    """
+    if "text" not in payload:
+        raise HTTPException(status_code=400, detail="Missing 'text' in request body.")
+
+    _ensure_session(chat_id)
+    session = chat_session[chat_id]
+    user_text = str(payload.get("text", "")).strip()
+
+    # Append user message
+    user_msg = {"role": "user", "content": user_text}
+    session["messages"].append(user_msg)
+
+    # Build history to send to model: include system instruction and conversation messages
+    history = [ASSISTANT_SYSINT] + session["messages"]
+
+    # Call model
+    reply_text, api_tool_calls = call_model(history, {"input": user_text})
+
+    # If model returns empty content but has tool calls, create a meaningful response
+    if not reply_text.strip() and api_tool_calls:
+        # Generate a user-friendly message based on the tool being called
+        tool_names = [tc.get("function", {}).get("name", "") for tc in api_tool_calls]
+        if "get_info" in tool_names:
+            reply_text = "I'll show you the information needed for project creation..."
+        elif "add_to_info" in tool_names:
+            reply_text = "I'm adding your project details..."
+        elif "confirm_info" in tool_names:
+            reply_text = "Let me confirm the information you provided..."
+        elif "create_JSON" in tool_names:
+            reply_text = "I'm creating the final JSON for your project..."
+        else:
+            reply_text = "Processing your request..."
+
+    # Prepare assistant message dict, include tool_calls if any
+    assistant_msg = {"role": "assistant", "content": reply_text, "tool_calls": api_tool_calls}
+    session["messages"].append(assistant_msg)
+
+    # If model requested tool calls, execute them sequentially
+    final_data = session.get("final_data")
+    tool_results = []
+    
+    if api_tool_calls:
+        print(f"DEBUG: Executing {len(api_tool_calls)} tool calls")
+        for raw_tc in api_tool_calls:
+            # Normalize to {name, args}
+            function_info = raw_tc.get("function", {})
+            tc_name = function_info.get("name") or raw_tc.get("name")
+            tc_args = function_info.get("arguments", {}) or raw_tc.get("arguments", {}) or {}
+            
+            # If arguments is a string, parse it as JSON
+            if isinstance(tc_args, str) and tc_args.strip():
+                try:
+                    tc_args = json.loads(tc_args)
+                except:
+                    tc_args = {}
+            
+            normalized = {"id": raw_tc.get("id", ""), "name": tc_name, "args": tc_args}
+
+            print(f"DEBUG: Executing tool {tc_name} with args: {tc_args}")
+            tool_output, tool_message = _execute_tool_call({"name": normalized["name"], "args": normalized["args"]}, chat_id)
+            
+            # Append tool message to session messages
+            session["messages"].append(tool_message)
+
+            tool_results.append({"name": normalized["name"], "output": tool_output})
+            
+            # Update the response text with tool results for better user experience
+            if tc_name == "get_info":
+                reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+            elif tc_name == "add_to_info":
+                if isinstance(tool_output, str) and "success" in tool_output.lower():
+                    reply_text = "Information added successfully! Let me confirm the details..."
+                    # After add_to_info, we need to automatically call confirm_info
+                    # We'll do this by making another model call with the updated history
+                    session["awaiting_confirmation"] = True
+                else:
+                    reply_text = "There was an issue adding your information. Please check the details."
+            elif tc_name == "confirm_info":
+                reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+                session["awaiting_confirmation"] = False
+            elif tc_name == "create_JSON":
+                if isinstance(tool_output, dict):
+                    reply_text = f"Project JSON created successfully!\n\nFinal Project Details:\n" + "\n".join([f"- {k}: {v}" for k, v in tool_output.items()])
+                else:
+                    reply_text = str(tool_output)
+
+        # CRITICAL FIX: After executing tools, if we just completed add_to_info successfully,
+        # we need to automatically continue to confirm_info by making another model call
+        if session.get("awaiting_confirmation"):
+            print("DEBUG: Auto-continuing to confirm_info after add_to_info")
+            
+            # Build updated history with tool results
+            updated_history = [ASSISTANT_SYSINT] + session["messages"]
+            
+            # Call model again to get the next step (should be confirm_info)
+            confirm_reply_text, confirm_api_tool_calls = call_model(updated_history, {"input": "continue"})
+            
+            # If model returns empty content but has tool calls, create meaningful response
+            if not confirm_reply_text.strip() and confirm_api_tool_calls:
+                confirm_reply_text = "Let me confirm the details with you..."
+            
+            # Create new assistant message for confirmation step
+            confirm_assistant_msg = {"role": "assistant", "content": confirm_reply_text, "tool_calls": confirm_api_tool_calls}
+            session["messages"].append(confirm_assistant_msg)
+            
+            # Execute any tool calls from this second model call (should be confirm_info)
+            if confirm_api_tool_calls:
+                for raw_tc in confirm_api_tool_calls:
+                    function_info = raw_tc.get("function", {})
+                    tc_name = function_info.get("name") or raw_tc.get("name")
+                    tc_args = function_info.get("arguments", {}) or raw_tc.get("arguments", {}) or {}
+                    
+                    if isinstance(tc_args, str) and tc_args.strip():
+                        try:
+                            tc_args = json.loads(tc_args)
+                        except:
+                            tc_args = {}
+                    
+                    normalized = {"id": raw_tc.get("id", ""), "name": tc_name, "args": tc_args}
+                    
+                    print(f"DEBUG: Executing follow-up tool {tc_name}")
+                    tool_output, tool_message = _execute_tool_call({"name": normalized["name"], "args": normalized["args"]}, chat_id)
+                    
+                    session["messages"].append(tool_message)
+                    tool_results.append({"name": normalized["name"], "output": tool_output})
+                    
+                    # Update the final response text
+                    if tc_name == "confirm_info":
+                        reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+            
+            # Update the final response to include the confirmation step
+            reply_text = confirm_reply_text
+
+    # Update the assistant message with the final response text
+    # Remove the old assistant message and add updated one
+    if assistant_msg in session["messages"]:
+        session["messages"].remove(assistant_msg)
+    assistant_msg["content"] = reply_text
+    session["messages"].append(assistant_msg)
+
+    # Return assistant reply and final JSON (if available)
+    return JSONResponse({
+        "response": reply_text,
+        "summary_json": session.get("final_data"),
+        "state": {"messages": session["messages"]},
+        "tool_results": tool_results
+    })
