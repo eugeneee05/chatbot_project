@@ -222,16 +222,14 @@ def get_info() -> str:
     """Provide all the exact information that required the user to fill in, please show the entire information to the user."""
 
     print ("Get info....")
-    return """
-    These are the 7 pieces of information that required the user to fill in for the project, Show the entire information to the user in this exact format:
-    Do not add any other text or information, just show the list below:
-    - Site Count
-    - Offset Count
-    - Project Name
-    - Device Name
-    - Device Revision
-    - Programme Id
-    - Programme Revision
+    return """These are the information that you are required to fill in before you create your project.
+- Site Count
+- Offset Count
+- Project Name
+- Device Name
+- Device Revision
+- Programme Id
+- Programme Revision
 """
 
 @tool
@@ -293,21 +291,18 @@ def confirm_info() -> str:
     """Asks the customer if the details are correct."""
     print ("Confirm info")
 
-    return f"""
-    You must to show all 7 information together with details provided by user: , site count, offset count, project name, device name, device revision, programme id, programme revision.
-    Ask the user whether the information is correct or not.
-    If no, ask the user which information need to be amend.
-    If yes, reply "Confirmation complete."
+    return f"""Current values:
+- Site Count: {PROJECT_INFO.get("site_count")}
+- Offset Count: {PROJECT_INFO.get("offset_count")}
+- Project Name: {PROJECT_INFO.get("project_name")}
+- Device Name: {PROJECT_INFO.get("device_name")}
+- Device Revision: {PROJECT_INFO.get("device_revision")}
+- Programme Id: {PROJECT_INFO.get("programme_id")}
+- Programme Revision: {PROJECT_INFO.get("programme_revision")}
 
-    Current values:
-    - Site Count: {PROJECT_INFO.get("site_count")}
-    - Offset Count: {PROJECT_INFO.get("offset_count")}
-    - Project Name: {PROJECT_INFO.get("project_name")}
-    - Device Name: {PROJECT_INFO.get("device_name")}
-    - Device Revision: {PROJECT_INFO.get("device_revision")}
-    - Programme Id: {PROJECT_INFO.get("programme_id")}
-    - Programme Revision: {PROJECT_INFO.get("programme_revision")}
+Is this information correct? (yes/no)
     """
+
 
 @tool
 def create_JSON() -> dict:  # Remove parameters
@@ -317,6 +312,7 @@ def create_JSON() -> dict:  # Remove parameters
     You need to retrieve the details from global variable and create the JSON using the detail."\n
     Show the JSON to the user.
     """
+    print ("Create JSON....")
     # Return JSON exactly using stored PROJECT_INFO values
     return {
         "site_count": PROJECT_INFO.get("site_count"),
@@ -450,42 +446,29 @@ def create_node(state: infoState) -> infoState:
     No tools are invoked here.
     You need to return the JSON only.
     """
-    messages = state.get("messages", [])
     info = state.get("info", [])
 
     print("--------------------------------")
     print("Create Node")
     print("--------------------------------")
 
-    # Create final JSON
-    result = {
-        "status": "success",
-        "details": info,
-        "project_json": {
-            "site_count": PROJECT_INFO.get("site_count"),
-            "offset_count": PROJECT_INFO.get("offset_count"),
-            "project_name": PROJECT_INFO.get("project_name"),
-            "device_name": PROJECT_INFO.get("device_name"),
-            "device_revision": PROJECT_INFO.get("device_revision"),
-            "programme_id": PROJECT_INFO.get("programme_id"),
-            "programme_revision": PROJECT_INFO.get("programme_revision"),
-        }
+    # FINAL JSON – this is what frontend expects
+    project_json = {
+        "site_count": PROJECT_INFO.get("site_count"),
+        "offset_count": PROJECT_INFO.get("offset_count"),
+        "project_name": PROJECT_INFO.get("project_name"),
+        "device_name": PROJECT_INFO.get("device_name"),
+        "device_revision": PROJECT_INFO.get("device_revision"),
+        "programme_id": PROJECT_INFO.get("programme_id"),
+        "programme_revision": PROJECT_INFO.get("programme_revision"),
     }
 
-    # Append the AI output
-    messages.append(
-        AIMessage(
-            content=f"Here is your final JSON:\n{result}",
-            additional_kwargs={}
-        )
-    )
+    # DO NOT append an AI message here – prevents DOUBLE CONFIRMATION
+    # DO NOT return messages — frontend expects ONLY JSON
 
-    # Mark the process as finished
     return {
-        **state,
-        "messages": messages,
-        "info": info,
-        "finished": True
+        "project_json": project_json,  # only this
+        "finished": True               # mark flow as complete
     }
 
 
@@ -613,7 +596,7 @@ def chat_api(chat_id: str, payload: dict):
     """
     Endpoint for frontend to send a user message and receive model reply.
     Expects payload: {"text": "<user message>"}
-    Returns: {"response": "<assistant reply>", "summary_json": <final json if available>, "state": {"messages": [...]}}
+    Returns: {"response": "<assistant reply>", "summary_json": <final json if available>, "state": {"messages": [...]} }
     """
     if "text" not in payload:
         raise HTTPException(status_code=400, detail="Missing 'text' in request body.")
@@ -632,21 +615,6 @@ def chat_api(chat_id: str, payload: dict):
     # Call model
     reply_text, api_tool_calls = call_model(history, {"input": user_text})
 
-    # If model returns empty content but has tool calls, create a meaningful response
-    if not reply_text.strip() and api_tool_calls:
-        # Generate a user-friendly message based on the tool being called
-        tool_names = [tc.get("function", {}).get("name", "") for tc in api_tool_calls]
-        if "get_info" in tool_names:
-            reply_text = "I'll show you the information needed for project creation..."
-        elif "add_to_info" in tool_names:
-            reply_text = "I'm adding your project details..."
-        elif "confirm_info" in tool_names:
-            reply_text = "Let me confirm the information you provided..."
-        elif "create_JSON" in tool_names:
-            reply_text = "I'm creating the final JSON for your project..."
-        else:
-            reply_text = "Processing your request..."
-
     # Prepare assistant message dict, include tool_calls if any
     assistant_msg = {"role": "assistant", "content": reply_text, "tool_calls": api_tool_calls}
     session["messages"].append(assistant_msg)
@@ -654,7 +622,7 @@ def chat_api(chat_id: str, payload: dict):
     # If model requested tool calls, execute them sequentially
     final_data = session.get("final_data")
     tool_results = []
-    
+
     if api_tool_calls:
         print(f"DEBUG: Executing {len(api_tool_calls)} tool calls")
         for raw_tc in api_tool_calls:
@@ -662,93 +630,59 @@ def chat_api(chat_id: str, payload: dict):
             function_info = raw_tc.get("function", {})
             tc_name = function_info.get("name") or raw_tc.get("name")
             tc_args = function_info.get("arguments", {}) or raw_tc.get("arguments", {}) or {}
-            
-            # If arguments is a string, parse it as JSON
+
             if isinstance(tc_args, str) and tc_args.strip():
                 try:
                     tc_args = json.loads(tc_args)
                 except:
                     tc_args = {}
-            
+
             normalized = {"id": raw_tc.get("id", ""), "name": tc_name, "args": tc_args}
 
             print(f"DEBUG: Executing tool {tc_name} with args: {tc_args}")
             tool_output, tool_message = _execute_tool_call({"name": normalized["name"], "args": normalized["args"]}, chat_id)
-            
+
             # Append tool message to session messages
             session["messages"].append(tool_message)
-
             tool_results.append({"name": normalized["name"], "output": tool_output})
-            
-            # Update the response text with tool results for better user experience
+
+            # Update the response text with tool results
             if tc_name == "get_info":
                 reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+
             elif tc_name == "add_to_info":
                 if isinstance(tool_output, str) and "success" in tool_output.lower():
                     reply_text = "Information added successfully! Let me confirm the details..."
-                    # After add_to_info, we need to automatically call confirm_info
-                    # We'll do this by making another model call with the updated history
+                    # Set flag to auto-confirm
                     session["awaiting_confirmation"] = True
                 else:
                     reply_text = "There was an issue adding your information. Please check the details."
+
             elif tc_name == "confirm_info":
                 reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
                 session["awaiting_confirmation"] = False
-            elif tc_name == "create_JSON":
-                if isinstance(tool_output, dict):
-                    reply_text = f"Project JSON created successfully!\n\nFinal Project Details:\n" + "\n".join([f"- {k}: {v}" for k, v in tool_output.items()])
-                else:
-                    reply_text = str(tool_output)
 
-        # CRITICAL FIX: After executing tools, if we just completed add_to_info successfully,
-        # we need to automatically continue to confirm_info by making another model call
-        if session.get("awaiting_confirmation"):
-            print("DEBUG: Auto-continuing to confirm_info after add_to_info")
-            
-            # Build updated history with tool results
-            updated_history = [ASSISTANT_SYSINT] + session["messages"]
-            
-            # Call model again to get the next step (should be confirm_info)
-            confirm_reply_text, confirm_api_tool_calls = call_model(updated_history, {"input": "continue"})
-            
-            # If model returns empty content but has tool calls, create meaningful response
-            if not confirm_reply_text.strip() and confirm_api_tool_calls:
-                confirm_reply_text = "Let me confirm the details with you..."
-            
-            # Create new assistant message for confirmation step
-            confirm_assistant_msg = {"role": "assistant", "content": confirm_reply_text, "tool_calls": confirm_api_tool_calls}
-            session["messages"].append(confirm_assistant_msg)
-            
-            # Execute any tool calls from this second model call (should be confirm_info)
-            if confirm_api_tool_calls:
-                for raw_tc in confirm_api_tool_calls:
-                    function_info = raw_tc.get("function", {})
-                    tc_name = function_info.get("name") or raw_tc.get("name")
-                    tc_args = function_info.get("arguments", {}) or raw_tc.get("arguments", {}) or {}
-                    
-                    if isinstance(tc_args, str) and tc_args.strip():
-                        try:
-                            tc_args = json.loads(tc_args)
-                        except:
-                            tc_args = {}
-                    
-                    normalized = {"id": raw_tc.get("id", ""), "name": tc_name, "args": tc_args}
-                    
-                    print(f"DEBUG: Executing follow-up tool {tc_name}")
-                    tool_output, tool_message = _execute_tool_call({"name": normalized["name"], "args": normalized["args"]}, chat_id)
-                    
-                    session["messages"].append(tool_message)
-                    tool_results.append({"name": normalized["name"], "output": tool_output})
-                    
-                    # Update the final response text
-                    if tc_name == "confirm_info":
-                        reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
-            
-            # Update the final response to include the confirmation step
-            reply_text = confirm_reply_text
+            elif tc_name == "create_JSON":
+                reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+
+    # 🔹 Auto-confirm after add_to_info
+    if session.get("awaiting_confirmation") is True:
+        print("DEBUG: Auto-executing confirm_info tool after add_to_info")
+
+        # Directly execute confirm_info tool
+        tool_output, tool_message = _execute_tool_call({"name": "confirm_info", "args": {}}, chat_id)
+
+        # Append tool message to session
+        session["messages"].append(tool_message)
+        tool_results.append({"name": "confirm_info", "output": tool_output})
+
+        # Update reply text
+        reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+
+        # Clear flag
+        session["awaiting_confirmation"] = False
 
     # Update the assistant message with the final response text
-    # Remove the old assistant message and add updated one
     if assistant_msg in session["messages"]:
         session["messages"].remove(assistant_msg)
     assistant_msg["content"] = reply_text
@@ -761,3 +695,4 @@ def chat_api(chat_id: str, payload: dict):
         "state": {"messages": session["messages"]},
         "tool_results": tool_results
     })
+
