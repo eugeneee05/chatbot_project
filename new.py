@@ -663,7 +663,7 @@ def chat_api(chat_id: str, payload: dict):
                 session["awaiting_confirmation"] = False
 
             elif tc_name == "create_JSON":
-                reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+                reply_text = tool_output if isinstance(tool_output, str) else json.dumps(tool_output)
 
     # 🔹 Auto-confirm after add_to_info
     if session.get("awaiting_confirmation") is True:
