@@ -11,13 +11,10 @@ from langgraph.prebuilt import ToolNode
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from langchain_core.messages import AIMessage, HumanMessage
-from IPython.display import Image, display
-from pprint import pprint
+from IPython.display import Image
 from langchain_core.messages import messages_to_dict
 from typing import Literal
-from collections.abc import Iterable
-from random import randint
-from langchain_core.messages import ToolMessage
+
 
 app = FastAPI()
 chat_session = {}
@@ -486,40 +483,6 @@ def update_state_after_tools(state: infoState) -> infoState:
     return {**state, "info": info, "finished": finished}
 
 
-def create_node(state: infoState) -> infoState:
-    """
-    Final node: Create the JSON output using the collected info. 
-    You are required to create JSON with site count, offset count, project name, device name, device revision, programme id and programme revision.
-    No tools are invoked here.
-    You need to return the JSON only.
-    """
-    info = state.get("info", [])
-
-    print("--------------------------------")
-    print("Create Node")
-    print("--------------------------------")
-
-    # FINAL JSON – this is what frontend expects
-    project_json = {
-        "site_count": PROJECT_INFO.get("site_count"),
-        "offset_count": PROJECT_INFO.get("offset_count"),
-        "project_name": PROJECT_INFO.get("project_name"),
-        "device_name": PROJECT_INFO.get("device_name"),
-        "device_revision": PROJECT_INFO.get("device_revision"),
-        "programme_id": PROJECT_INFO.get("programme_id"),
-        "programme_revision": PROJECT_INFO.get("programme_revision"),
-    }
-
-    # DO NOT append an AI message here – prevents DOUBLE CONFIRMATION
-    # DO NOT return messages — frontend expects ONLY JSON
-
-    return {
-        "project_json": project_json,  
-        "finished": True              
-    }
-
-
-
 def maybe_route_to_tools(state: infoState) -> str:
     """Route between chat and the tool nodes if a tool call is made."""
     msgs = state.get("messages", [])
@@ -552,13 +515,12 @@ graph_builder.add_node("chatbot", chatbot_with_tools)
 graph_builder.add_node("human", human_node)
 graph_builder.add_node("tools", tool_node)
 graph_builder.add_node("update_state", update_state_after_tools)
-graph_builder.add_node("creating", create_node)
 graph_builder.add_conditional_edges("chatbot", maybe_route_to_tools)
 graph_builder.add_conditional_edges("human", maybe_exit_human_node)
 graph_builder.add_edge(START, "chatbot")
 graph_builder.add_edge("tools", "update_state")
 graph_builder.add_edge("update_state", "chatbot")
-graph_builder.add_edge("creating", END)
+graph_builder.add_edge("update_state", END)
 
 chat_graph = graph_builder.compile()
 
@@ -664,7 +626,7 @@ def chat_api(chat_id: str, payload: dict):
     assistant_msg = {"role": "assistant", "content": reply_text, "tool_calls": api_tool_calls}
     session["messages"].append(assistant_msg)
 
-    # If model requested tool calls, execute them sequentially
+    # If model requested multiple tool calls, execute them sequentially
     final_data = session.get("final_data")
     tool_results = []
     validation_passed = False
@@ -672,6 +634,7 @@ def chat_api(chat_id: str, payload: dict):
     if api_tool_calls:
         print(f"DEBUG: Executing {len(api_tool_calls)} tool calls")
         
+        # Iterate through all tool calls returned by the model
         for raw_tc in api_tool_calls:
             # Normalize tool call
             function_info = raw_tc.get("function", {})
@@ -706,7 +669,6 @@ def chat_api(chat_id: str, payload: dict):
                     # Validation passed - continue with next tools
                     validation_passed = True
                     reply_text = "Validation passed! Adding your information..."
-                    print("DEBUG: Validation passed, continuing with next tools")
 
             elif tc_name == "add_to_info":
                 if isinstance(tool_output, str) and "success" in tool_output.lower():
