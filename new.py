@@ -84,8 +84,8 @@ tools_schema = [
         "parameters": {
             "type": "object",
             "properties": {
-                "site_count": {"type": "string"},
-                "offset_count": {"type": "string"},
+                "site_count": {"type": "integer"},
+                "offset_count": {"type": "integer"},
                 "project_name": {"type": "string"},
                 "device_name": {"type": "string"},
                 "device_revision": {"type": "string"},
@@ -104,6 +104,34 @@ tools_schema = [
         },
     },
 },
+{
+        "type": "function",
+        "function": {
+            "name": "validate_info",
+            "description": "Validate the input information from the user",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "site_count": {"type": "integer"},
+                    "offset_count": {"type": "integer"},
+                    "project_name": {"type": "string"},
+                    "device_name": {"type": "string"},
+                    "device_revision": {"type": "string"},
+                    "programme_id": {"type": "string"},
+                    "programme_revision": {"type": "string"}
+                },
+                "required": [
+                    "site_count",
+                    "offset_count",
+                    "project_name",
+                    "device_name",
+                    "device_revision",
+                    "programme_id",
+                    "programme_revision"
+                ],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -162,13 +190,14 @@ ASSISTANT_SYSINT = {
         "You will ask the human which action he want to perform.\n"
         "If human say they want to create project, "
         "directly call get_info tool to show the list that required to fill in by them.\n"
-        "You must call add_to_info first to add the details.\n "
-        "After adding the information, you MUST immediately call confirm_info to show the summary to get confirmation from human.\n"
-        "Wait human to agree with the details you show, then only "
-        "call create_JSON. You need to return the created JSON to the user. Then, "
-        "thank the user and say goodbye!\n"
-        "WORKFLOW: get_info -> add_to_info -> confirm_info -> create_JSON\n"
-        "After add_to_info is successfully executed, you MUST call confirm_info immediately without waiting for user input."
+        "You need to validate the details first by calling validate_info.\n"
+        "If validation fails, ask the user to correct the information.\n"
+        "If validation PASSES, you MUST immediately call add_to_info with the same parameters.\n"
+        "After add_to_info succeeds, you MUST call confirm_info immediately.\n"
+        "When user confirms the information is correct, call create_JSON.\n"
+        "WORKFLOW: get_info -> validate_info -> add_to_info -> confirm_info -> create_JSON\n"
+        "CRITICAL: After validate_info returns success, you MUST call add_to_info with the same exact parameters.\n"
+        "After add_to_info returns success, you MUST call confirm_info immediately without waiting for user input."
     )
 }
 
@@ -233,25 +262,26 @@ def get_info() -> str:
 """
 
 @tool
-def add_to_info( 
-    site_count: str, 
-    offset_count: str, 
+def validate_info(
+    site_count: int, 
+    offset_count: int, 
     project_name: str, 
     device_name: str, 
     device_revision: str, 
     programme_id: str, 
     programme_revision: str
 ) -> str:
-    """Adds the details to the particular information, with validation."""
-
-    print ("Add to info....")
+    """Validates the input information."""
+    print("validating.....")
     errors = []
 
-    # Validation rules
-    if not site_count or not site_count.isdigit():
-        errors.append("site_count must be a number.")
-    if not offset_count or not offset_count.isdigit():
-        errors.append("offset_count must be a number.")
+    # Validation rules for integers (using isinstance)
+    if not isinstance(site_count, int):
+        errors.append("site_count must be an integer.")
+    if not isinstance(offset_count, int):
+        errors.append("offset_count must be an integer.")
+    
+    # Validation for strings (checking for non-empty strings)
     if not project_name.strip():
         errors.append("project_name is required.")
     if not device_name.strip():
@@ -263,9 +293,27 @@ def add_to_info(
     if not programme_revision.strip():
         errors.append("programme_revision is required.")
 
-    # If errors exist → return structured error message
+    # If there are errors, return the error message
     if errors:
-        return f'{{"status":"error","errors":{errors}}}'
+        return f'{{"status":"error","message":"{", ".join(errors)}"}}'
+    
+    # If no errors, return success
+    return '{"status":"success","message":"Validation passed."}'
+
+
+@tool
+def add_to_info( 
+    site_count: int, 
+    offset_count: int, 
+    project_name: str, 
+    device_name: str, 
+    device_revision: str, 
+    programme_id: str, 
+    programme_revision: str
+) -> str:
+    """Adds the details to the particular information, with validation."""
+    
+    print("Add to info...") 
 
     # If validation passed → store into the global PROJECT_INFO dict
     PROJECT_INFO["site_count"] = site_count
@@ -284,6 +332,7 @@ def add_to_info(
     )
     
     return f'{{"status":"success","info":"{info_string}"}}'
+
 
 
 @tool
@@ -325,7 +374,7 @@ def create_JSON() -> dict:  # Remove parameters
     }
 
 
-tools = [get_info, add_to_info, confirm_info, create_JSON]
+tools = [get_info, validate_info, add_to_info, confirm_info, create_JSON]
 tool_node = ToolNode(tools)
 
 
@@ -347,8 +396,6 @@ def call_model_with_tools(history, tools_schema=None):
     formatted_tool_calls = []
     if api_tool_calls:
         for tc in api_tool_calls:
-            # Format tool call to match AIMessage expected format
-            # AIMessage expects: id (str), name (str), args (dict)
             function_info = tc.get("function", {})
             tool_name = function_info.get("name", "")
             tool_args = function_info.get("arguments", {})
@@ -386,7 +433,7 @@ def chatbot_with_tools(state: infoState) -> infoState:
         new_output = call_model_with_tools([ASSISTANT_SYSINT] + state["messages"], tools_schema)
 
         # --- DEBUG: print raw model reply ---
-        # print("Model reply:", getattr(new_output, "content", ""))
+        print("Model reply:", getattr(new_output, "content", ""))
         
         # --- DEBUG: show tool calls from API response ---
         print("DEBUG: Tool calls from API:")
@@ -467,8 +514,8 @@ def create_node(state: infoState) -> infoState:
     # DO NOT return messages — frontend expects ONLY JSON
 
     return {
-        "project_json": project_json,  # only this
-        "finished": True               # mark flow as complete
+        "project_json": project_json,  
+        "finished": True              
     }
 
 
@@ -595,8 +642,6 @@ def chat_initial(chat_id: str):
 def chat_api(chat_id: str, payload: dict):
     """
     Endpoint for frontend to send a user message and receive model reply.
-    Expects payload: {"text": "<user message>"}
-    Returns: {"response": "<assistant reply>", "summary_json": <final json if available>, "state": {"messages": [...]} }
     """
     if "text" not in payload:
         raise HTTPException(status_code=400, detail="Missing 'text' in request body.")
@@ -609,24 +654,26 @@ def chat_api(chat_id: str, payload: dict):
     user_msg = {"role": "user", "content": user_text}
     session["messages"].append(user_msg)
 
-    # Build history to send to model: include system instruction and conversation messages
+    # Build history to send to model
     history = [ASSISTANT_SYSINT] + session["messages"]
 
-    # Call model
+    # Call model to get a response
     reply_text, api_tool_calls = call_model(history, {"input": user_text})
 
-    # Prepare assistant message dict, include tool_calls if any
+    # Prepare assistant message dict
     assistant_msg = {"role": "assistant", "content": reply_text, "tool_calls": api_tool_calls}
     session["messages"].append(assistant_msg)
 
     # If model requested tool calls, execute them sequentially
     final_data = session.get("final_data")
     tool_results = []
+    validation_passed = False
 
     if api_tool_calls:
         print(f"DEBUG: Executing {len(api_tool_calls)} tool calls")
+        
         for raw_tc in api_tool_calls:
-            # Normalize to {name, args}
+            # Normalize tool call
             function_info = raw_tc.get("function", {})
             tc_name = function_info.get("name") or raw_tc.get("name")
             tc_args = function_info.get("arguments", {}) or raw_tc.get("arguments", {}) or {}
@@ -646,9 +693,20 @@ def chat_api(chat_id: str, payload: dict):
             session["messages"].append(tool_message)
             tool_results.append({"name": normalized["name"], "output": tool_output})
 
-            # Update the response text with tool results
+            # Handle tool responses
             if tc_name == "get_info":
                 reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+
+            elif tc_name == "validate_info":
+                # Handle both success and error cases
+                if "error" in tool_output.lower():
+                    reply_text = tool_output  # Return validation error
+                    break  # Stop further execution
+                else:
+                    # Validation passed - continue with next tools
+                    validation_passed = True
+                    reply_text = "Validation passed! Adding your information..."
+                    print("DEBUG: Validation passed, continuing with next tools")
 
             elif tc_name == "add_to_info":
                 if isinstance(tool_output, str) and "success" in tool_output.lower():
@@ -660,12 +718,14 @@ def chat_api(chat_id: str, payload: dict):
 
             elif tc_name == "confirm_info":
                 reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
-                session["awaiting_confirmation"] = False
 
             elif tc_name == "create_JSON":
-                reply_text = tool_output if isinstance(tool_output, str) else json.dumps(tool_output)
+                if isinstance(tool_output, dict):
+                    reply_text = f"Project JSON created successfully!\n{json.dumps(tool_output, indent=2)}"
+                else:
+                    reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
 
-    # 🔹 Auto-confirm after add_to_info
+    # Handle auto-confirmation after add_to_info
     if session.get("awaiting_confirmation") is True:
         print("DEBUG: Auto-executing confirm_info tool after add_to_info")
 
@@ -695,4 +755,7 @@ def chat_api(chat_id: str, payload: dict):
         "state": {"messages": session["messages"]},
         "tool_results": tool_results
     })
+
+
+
 
