@@ -194,7 +194,6 @@ ASSISTANT_SYSINT = {
         "When user confirms the information is correct, call create_JSON.\n"
         "WORKFLOW: get_info -> validate_info -> add_to_info -> confirm_info -> create_JSON\n"
         "CRITICAL: After validate_info returns success, you MUST call add_to_info with the same exact parameters.\n"
-        "After add_to_info returns success, you MUST call confirm_info immediately without waiting for user input."
     )
 }
 
