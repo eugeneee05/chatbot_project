@@ -4,7 +4,7 @@ from annotated_types import IsDigit
 import requests
 import traceback
 import json
-from typing import Annotated
+from typing import Annotated, Literal
 from requests.compat import integer_types
 from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
@@ -13,14 +13,12 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from IPython.display import Image, display
 from pprint import pprint
 from langchain_core.messages import messages_to_dict
-from typing import Literal
 from collections.abc import Iterable
 from random import randint
-from langchain_core.messages import ToolMessage
 
 app = FastAPI()
 chat_session = {}
@@ -37,18 +35,25 @@ PROJECT_INFO = {
 }
 # ----------------------------------------------------------------------
 
+
 class infoState(TypedDict):
     """State representing the customer's order conversation."""
     messages: Annotated[list, add_messages]
     info: list[str]
     finished: bool
 
+
 def convert_messages_to_dict(messages):
+    """
+    Convert LangChain / internal messages to a list of dicts for the model.
+    IMPORTANT: If the message is already a dict (our FastAPI path), pass it
+    through WITHOUT stripping fields like tool_call_id, tool_calls, etc.
+    """
     result = []
     for m in messages:
         if isinstance(m, dict):
-            role = m.get("role", "user")
-            content = m.get("content", "")
+            # Already in OpenAI style, just keep as is
+            result.append(m)
         else:
             # Map LangChain types to valid roles
             m_type = getattr(m, "type", None)
@@ -63,12 +68,12 @@ def convert_messages_to_dict(messages):
 
             content = getattr(m, "content", "")
 
-        # Ensure content is a string
-        if not isinstance(content, str):
-            content = str(content)
+            if not isinstance(content, str):
+                content = str(content)
 
-        result.append({"role": role, "content": content})
+            result.append({"role": role, "content": content})
     return result
+
 
 tools_schema = [
     {
@@ -83,7 +88,7 @@ tools_schema = [
         "type": "function",
         "function": {
             "name": "validate_info",
-            "description": "Validate the input information from the user",
+            "description": "Validate the input information from the user, and add all project details provided exactly from the user",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -108,34 +113,6 @@ tools_schema = [
         },
     },
     {
-    "type": "function",
-    "function": {
-        "name": "add_to_info",
-        "description": "Add all project details provided exactly from the user",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "site_count": {"type": "string"},
-                "offset_count": {"type": "string"},
-                "project_name": {"type": "string"},
-                "device_name": {"type": "string"},
-                "device_revision": {"type": "string"},
-                "programme_id": {"type": "string"},
-                "programme_revision": {"type": "string"}
-            },
-            "required": [
-                "site_count",
-                "offset_count",
-                "project_name",
-                "device_name",
-                "device_revision",
-                "programme_id",
-                "programme_revision"
-            ],
-        },
-    },
-},
-    {
         "type": "function",
         "function": {
             "name": "confirm_info",
@@ -148,21 +125,24 @@ tools_schema = [
         "function": {
             "name": "create_JSON",
             "description": "Generate a JSON object with all user-provided info",
-            "parameters": {"type": "object", "properties": {}, "required": []},  # Fixed: no parameters needed
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
 ]
 
+
 def call_model(history, inputs):
     # Convert LangChain message objects (e.g. HumanMessage, AIMessage) to dicts
-    if history and hasattr(history[0], "type"):
+    if history and not isinstance(history[0], dict) and hasattr(history[0], "type"):
         history = messages_to_dict(history)
-    
+
     payload = {
         "model": "unsloth/phi-4-mini-instruct",
         "messages": convert_messages_to_dict(history),
         "temperature": 0.0,
-        "tools": tools_schema
+        "tools": tools_schema,
+        # tool_choice could be "auto" or omitted depending on your backend
+        # "tool_choice": "auto",
     }
 
     try:
@@ -173,10 +153,11 @@ def call_model(history, inputs):
         data = response.json()
         message = data["choices"][0]["message"]
         reply = message.get("content", "") or ""
-        tool_calls = message.get("tool_calls", [])  # external API tool_calls format
+        tool_calls = message.get("tool_calls", [])
 
+        # Optional: keep original casing for inputs if you want
         for original in inputs.values():
-            if original.lower() in reply.lower():
+            if isinstance(original, str) and original.lower() in reply.lower():
                 reply = re.sub(re.escape(original), original, reply, flags=re.IGNORECASE)
 
         return reply, tool_calls
@@ -186,29 +167,27 @@ def call_model(history, inputs):
             print(e.response.text)
         return f"Error communicating with model: {e}", []
 
+
 ASSISTANT_SYSINT = {
-    "role":"system",
+    "role": "system",
     "content": (
-        "You are AssistantBot.\n"
-        "You must manage the entire workflow yourself using tool calls. \n" 
-        "You may call multiple tools in the correct order based on user intent.\n"
-        "Workflow rules:\n"
-        "1. If user wants to create a project → call get_info.\n"
-        "2. After user provides all 7 fields → call validate_info.\n"
-        "3. If validate_info returns {\"result\":\"ok\"}, call add_to_info immediately without waiting for user to reply.\n"
-        "4. If validate_info returns {\"result\":\"error\"}, ask the user to correct the missing fields.\n"
-        "5. After add_to_info → call confirm_info, without waiting for user to reply.\n"
-        "6. If user confirms → call create_JSON.\n"
-        "7. You may call multiple tools in a single response.\n"
-        "IMPORTANT:\n"
-        "- Always follow the tool order strictly.\n"
-        "- Never repeat the same tool call twice for the same step.\n"
-        "- Do not execute later tools until earlier ones succeed.\n"
-        "- Always pass arguments EXACTLY as user said.\n"
+        "You are an AssistantBot, an interactive create project system.\n"
+        "You will ask the human which action he want to perform.\n"
+        "If human say they want to create project, "
+        "directly call get_info tool to show the list that required to fill in by them.\n"
+        "You must call validate_info tool to validate the information that human provided.\n"
+        "If there are invalid information or missing values, you need to ask the human to correct the information.\n"
+        "After validate_info, you MUST immediately call confirm_info.\n"
+        "Wait for the human to agree with the details you show (e.g. they say 'yes', 'ok', 'correct'), then ONLY "
+        "call create_JSON. You MUST call create_JSON once the human agrees.\n"
+        "You need to return the created JSON to the user. Then, "
+        "thank the user and say goodbye!\n"
+        "WORKFLOW: get_info -> validate_info -> confirm_info -> create_JSON\n"
     )
 }
 
 WELCOME_MSG = "Welcome to the TechFlow Assistant Chatbot. Type 'q' to quit. What action do you want to do?"
+
 
 def human_node(state: infoState) -> infoState:
     """Display the last model message to the user, and receive the user's input."""
@@ -217,10 +196,8 @@ def human_node(state: infoState) -> infoState:
     print("--------------------------------")
     print("Human Node")
     print("--------------------------------")
-    
-    # Always show the last assistant message (if any)
+
     if messages:
-        # Find the last assistant message to display
         for msg in reversed(messages):
             if isinstance(msg, dict):
                 role = msg.get("role")
@@ -228,14 +205,13 @@ def human_node(state: infoState) -> infoState:
             else:
                 role = "assistant" if getattr(msg, "type", None) == "ai" else "user"
                 content = getattr(msg, "content", "")
-            
+
             if role == "assistant":
                 print("Model:", content)
                 break
     else:
         print("Model: (no message)")
 
-    # Always get user input when we reach human node
     user_input = input("User: ")
 
     if user_input.lower() in {"q", "quit", "exit", "goodbye"}:
@@ -246,6 +222,7 @@ def human_node(state: infoState) -> infoState:
 
     return state
 
+
 def maybe_exit_human_node(state: infoState) -> Literal["chatbot", "__end__"]:
     """Route to the chatbot, unless it looks like the user is exiting."""
     if state.get("finished", False):
@@ -253,11 +230,11 @@ def maybe_exit_human_node(state: infoState) -> Literal["chatbot", "__end__"]:
     else:
         return "chatbot"
 
+
 @tool
 def get_info() -> str:
     """Provide all the exact information that required the user to fill in, please show the entire information to the user."""
-
-    print ("Get info....")
+    print("Get info....")
     return """These are the information that you are required to fill in before you create your project.
 - Site Count
 - Offset Count
@@ -268,14 +245,15 @@ def get_info() -> str:
 - Programme Revision
 """
 
+
 @tool
 def validate_info(
-    site_count: str, 
-    offset_count: str, 
-    project_name: str, 
-    device_name: str, 
-    device_revision: str, 
-    programme_id: str, 
+    site_count: str,
+    offset_count: str,
+    project_name: str,
+    device_name: str,
+    device_revision: str,
+    programme_id: str,
     programme_revision: str
 ) -> str:
     """Validates the input information. There are total of 7 information:
@@ -285,18 +263,18 @@ def validate_info(
     print("validating.....")
     errors = []
 
-    # --- Convert integer fields if possible ---
     try:
-        site_count = int(site_count)
+        site_count_int = int(site_count)
     except (ValueError, TypeError):
         errors.append("site_count must be an integer.")
+        site_count_int = None
 
     try:
-        offset_count = int(offset_count)
+        offset_count_int = int(offset_count)
     except (ValueError, TypeError):
         errors.append("offset_count must be an integer.")
+        offset_count_int = None
 
-    # --- Validate string fields ---
     if not isinstance(project_name, str) or not project_name.strip():
         errors.append("project_name is required.")
     if not isinstance(device_name, str) or not device_name.strip():
@@ -308,32 +286,12 @@ def validate_info(
     if not isinstance(programme_revision, str) or not programme_revision.strip():
         errors.append("programme_revision is required.")
 
-    # Return machine-readable success/failure (no user messaging)
     if errors:
         return json.dumps({
             "result": "error",
             "errors": errors
         })
 
-    return json.dumps({
-        "result": "ok"
-    })
-
-@tool
-def add_to_info( 
-    site_count: str, 
-    offset_count: str, 
-    project_name: str, 
-    device_name: str, 
-    device_revision: str, 
-    programme_id: str, 
-    programme_revision: str
-) -> str:
-    """Adds the details to the particular information, with validation."""
-    
-    print("Add to info...") 
-
-    # If validation passed → store into the global PROJECT_INFO dict
     PROJECT_INFO["site_count"] = site_count
     PROJECT_INFO["offset_count"] = offset_count
     PROJECT_INFO["project_name"] = project_name
@@ -342,21 +300,17 @@ def add_to_info(
     PROJECT_INFO["programme_id"] = programme_id
     PROJECT_INFO["programme_revision"] = programme_revision
 
-    # Return success
-    info_string = (
-        f"Site Count: {site_count}, Offset Count: {offset_count}, Project Name: {project_name}, "
-        f"Device Name: {device_name}, Device Revision: {device_revision}, Programme Id: {programme_id}, "
-        f"Programme Revision: {programme_revision}"
-    )
-    
-    return f'{{"status":"success","info":"{info_string}"}}'
+    print("Values stored successfully")
 
+    return json.dumps({
+        "result": "ok"
+    })
 
 
 @tool
 def confirm_info() -> str:
     """Asks the customer if the details are correct."""
-    print ("Confirm info")
+    print("Confirm info")
 
     return f"""Current values:
 - Site Count: {PROJECT_INFO.get("site_count")}
@@ -368,20 +322,19 @@ def confirm_info() -> str:
 - Programme Revision: {PROJECT_INFO.get("programme_revision")}
 
 Is this information correct? (yes/no)
-    """
+"""
 
 
 @tool
-def create_JSON() -> dict:  # Remove parameters
+def create_JSON() -> dict:
     """
-    Create JSON for project creation.\n
-    After confirming all the details from user,
-    You need to retrieve the details from global variable and create the JSON using the detail."\n
+    Create JSON for project creation after confirming all details from user.
+    Retrieve details from global PROJECT_INFO variable and create JSON.
     Show the JSON to the user.
     """
-    print ("Create JSON....")
-    # Return JSON exactly using stored PROJECT_INFO values
-    return {
+    print("Create JSON tool called - Creating project JSON...")
+
+    project_json = {
         "site_count": PROJECT_INFO.get("site_count"),
         "offset_count": PROJECT_INFO.get("offset_count"),
         "project_name": PROJECT_INFO.get("project_name"),
@@ -391,40 +344,41 @@ def create_JSON() -> dict:  # Remove parameters
         "programme_revision": PROJECT_INFO.get("programme_revision"),
     }
 
+    return project_json
 
-tools = [get_info, validate_info, add_to_info, confirm_info, create_JSON]
+
+tools = [get_info, validate_info, confirm_info, create_JSON]
 tool_node = ToolNode(tools)
 
 
 def call_model_with_tools(history, tools_schema=None):
     """
-    Call the FASTAPI model, providing tool info as system context.
-    Automatically formats tool descriptions from the schema.
+    Used in graph part (kept for completeness).
     """
     if history and hasattr(history[0], "type"):
         history = messages_to_dict(history)
 
-    # Get last message content
-    last_message = getattr(history[-1], "content", "") if not isinstance(history[-1], dict) else history[-1].get("content", "")
+    last_message = (
+        getattr(history[-1], "content", "")
+        if not isinstance(history[-1], dict)
+        else history[-1].get("content", "")
+    )
 
-    # Call model
     reply_text, api_tool_calls = call_model(history, {"input": last_message})
 
-    # Format tool_calls for AIMessage
     formatted_tool_calls = []
     if api_tool_calls:
         for tc in api_tool_calls:
             function_info = tc.get("function", {})
             tool_name = function_info.get("name", "")
             tool_args = function_info.get("arguments", {})
-            
-            # If arguments is a string, try to parse it as JSON
+
             if isinstance(tool_args, str):
                 try:
                     tool_args = json.loads(tool_args)
                 except:
                     tool_args = {}
-            
+
             formatted_tc = {
                 "id": tc.get("id", ""),
                 "name": tool_name,
@@ -435,11 +389,9 @@ def call_model_with_tools(history, tools_schema=None):
     return AIMessage(content=reply_text, tool_calls=formatted_tool_calls)
 
 
-
 def chatbot_with_tools(state: infoState) -> infoState:
     """
-    Chatbot node: calls the model, handles tool calls automatically,
-    and updates state.
+    Graph version (not used in FastAPI endpoints directly).
     """
     defaults = {"messages": [], "info": [], "finished": False}
 
@@ -449,23 +401,16 @@ def chatbot_with_tools(state: infoState) -> infoState:
 
     if state.get("messages"):
         new_output = call_model_with_tools([ASSISTANT_SYSINT] + state["messages"], tools_schema)
-
-        # --- DEBUG: print raw model reply ---
         print("Model reply:", getattr(new_output, "content", ""))
-        
-        # --- DEBUG: show tool calls from API response ---
         print("DEBUG: Tool calls from API:")
         if new_output.tool_calls:
             for t in new_output.tool_calls:
                 print(f"Tool Name: {t.get('name')}, Args: {t.get('args')}, ID: {t.get('id')}")
         else:
             print("No tool calls in API response.")
-
     else:
-        print("B")
         new_output = AIMessage(content=WELCOME_MSG, tool_calls=[])
 
-    # Append model message
     updated_messages = state["messages"] + [
         AIMessage(content=new_output.content, tool_calls=new_output.tool_calls)
     ]
@@ -481,43 +426,34 @@ def update_state_after_tools(state: infoState) -> infoState:
 
     messages = state.get("messages", [])
 
-    # Search backwards for the most recent AI message that has tool_calls
     for msg in reversed(messages):
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tool_call in msg.tool_calls:
-
-                # Only append summary if not already present
                 if tool_call["name"] == "add_to_info":
                     args = tool_call.get("args", {})
                     summary = ", ".join(
-                        f"{key}: {args.get(key, PROJECT_INFO.get(key, ''))}" 
+                        f"{key}: {args.get(key, PROJECT_INFO.get(key, ''))}"
                         for key in PROJECT_INFO
                     )
                     if summary not in info:
                         info.append(summary)
 
                 elif tool_call["name"] == "create_JSON":
-                    finished = True  # Mark finished immediately
+                    finished = True
 
-            break  # Only process the most recent tool call message
+            break
 
     return {**state, "info": info, "finished": finished}
 
 
 def create_node(state: infoState) -> infoState:
     """
-    Final node: Create the JSON output using the collected info. 
-    You are required to create JSON with site count, offset count, project name, device name, device revision, programme id and programme revision.
-    No tools are invoked here.
-    You need to return the JSON only.
+    Final node: Create the JSON output using the collected info.
     """
-    info = state.get("info", [])
-
     print("--------------------------------")
     print("Create Node")
     print("--------------------------------")
 
-    # FINAL JSON – this is what frontend expects
     project_json = {
         "site_count": PROJECT_INFO.get("site_count"),
         "offset_count": PROJECT_INFO.get("offset_count"),
@@ -528,14 +464,10 @@ def create_node(state: infoState) -> infoState:
         "programme_revision": PROJECT_INFO.get("programme_revision"),
     }
 
-    # DO NOT append an AI message here – prevents DOUBLE CONFIRMATION
-    # DO NOT return messages — frontend expects ONLY JSON
-
     return {
-        "project_json": project_json,  
-        "finished": True              
+        "project_json": project_json,
+        "finished": True
     }
-
 
 
 def maybe_route_to_tools(state: infoState) -> str:
@@ -546,22 +478,18 @@ def maybe_route_to_tools(state: infoState) -> str:
 
     last_msg = msgs[-1]
 
-    # Determine role of last message
     if isinstance(last_msg, dict):
         role = last_msg.get("role")
     else:
         msg_type = getattr(last_msg, "type", None)
         role = "user" if msg_type == "human" else "assistant"
 
-    # If last message is from user → chatbot should respond
     if role == "user":
         return "chatbot"
 
-    # If last message is from assistant and has tool calls → route to tools
     if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
         return "tools"
 
-    # If last message is from assistant without tool calls → wait for human input
     return "human"
 
 
@@ -585,62 +513,56 @@ Image(chat_graph.get_graph().draw_mermaid_png())
 # Initialize the conversation state
 initial_state = {"messages": [], "info": []}
 
+
 # ----------------- New REST endpoints for frontend integration -----------------
 
 def _ensure_session(chat_id: str):
     """Create a fresh session if not exists."""
     if chat_id not in chat_session:
         chat_session[chat_id] = {
-            "messages": [],     # list of dicts: {"role": "user"|"assistant"|"tool", "content": "..."}
+            "messages": [],     # list of dicts
             "final_data": None, # will hold final JSON when create_JSON executed
-            "awaiting_confirmation": False,  # Track if we're waiting for user confirmation
         }
 
-def _execute_tool_call(tool_call, chat_id=None):
+
+def _execute_tool_call(name: str, args: dict, chat_id: str | None = None):
     """
-    Execute a tool call returned by the model.
-    tool_call is expected to be a dict with keys: id, name, args (dict)
-    Returns (tool_output_str_or_dict, tool_role_message_dict)
+    Execute a tool call by name and args.
+    Returns the raw Python output (dict, str, etc.).
     """
-    name = tool_call.get("name")
-    args = tool_call.get("args", {}) or {}
-    
+    print(f"DEBUG: Executing tool {name} with args: {args}")
+
+    # Find tool object
+    tool_obj = None
+    for t in tools:
+        if t.name == name:
+            tool_obj = t
+            break
+
+    if tool_obj is None:
+        error_msg = f"Unknown tool {name}"
+        print(f"DEBUG: {error_msg}")
+        return error_msg
+
     try:
-        # Find the corresponding tool from the tools list
-        tool_obj = None
-        for tool in tools:
-            if tool.name == name:
-                tool_obj = tool
-                break
-        
-        if tool_obj is None:
-            error_msg = f"Unknown tool {name}"
-            return error_msg, {"role": "tool", "content": error_msg}
-        
-        # Invoke the tool with the arguments
-        if name == "get_info" or name == "confirm_info" or name == "create_JSON":
-            # These tools take no arguments
+        # Tools with no args
+        if name in ["get_info", "confirm_info", "create_JSON"]:
             out = tool_obj.invoke({})
         else:
-            # These tools take arguments
             out = tool_obj.invoke(args)
-        
-        # Special handling for create_JSON to store final data
+
         if name == "create_JSON" and chat_id:
             if isinstance(out, dict):
                 chat_session[chat_id]["final_data"] = out
-        
-        # Convert output to string for tool message
-        if isinstance(out, (dict, list)):
-            tool_content = json.dumps(out)
-        else:
-            tool_content = str(out)
-            
-        return out, {"role": "tool", "content": tool_content}
-        
+
+        print(f"DEBUG: Tool {name} output (raw): {out}")
+        return out
+
     except Exception as e:
-        error_msg = f"Tool {name} error: {e}"
-        return error_msg, {"role": "tool", "content": error_msg}
+        error_msg = f"Tool {name} error: {str(e)}"
+        print(f"DEBUG: {error_msg}")
+        return error_msg
+
 
 @app.get("/chat/initial/{chat_id}")
 def chat_initial(chat_id: str):
@@ -650,11 +572,11 @@ def chat_initial(chat_id: str):
     _ensure_session(chat_id)
     session = chat_session[chat_id]
 
-    # Start by sending the assistant welcome message (no model call required)
-    assistant_msg = {"role": "assistant", "content": WELCOME_MSG, "tool_calls": []}
+    assistant_msg = {"role": "assistant", "content": WELCOME_MSG}
     session["messages"].append(assistant_msg)
 
     return JSONResponse({"response": WELCOME_MSG, "state": {"messages": session["messages"]}})
+
 
 @app.post("/chat/{chat_id}")
 def chat_api(chat_id: str, payload: dict):
@@ -668,38 +590,32 @@ def chat_api(chat_id: str, payload: dict):
     session = chat_session[chat_id]
     user_text = str(payload.get("text", "")).strip()
 
-    # Append user message
     user_msg = {"role": "user", "content": user_text}
     session["messages"].append(user_msg)
 
-    # Build history to send to model
     history = [ASSISTANT_SYSINT] + session["messages"]
 
-    # Call model to get a response
     reply_text, api_tool_calls = call_model(history, {"input": user_text})
 
-    # Prepare assistant message dict
-    assistant_msg = {"role": "assistant", "content": reply_text, "tool_calls": api_tool_calls}
+    assistant_msg = {
+        "role": "assistant",
+        "content": reply_text,
+    }
+    if api_tool_calls:
+        assistant_msg["tool_calls"] = api_tool_calls
+
     session["messages"].append(assistant_msg)
 
-    # Initialize session["info"] if not already initialized
-    if "info" not in session:
-        session["info"] = {}
-
-    # If model requested multiple tool calls, execute them sequentially
-    final_data = session.get("final_data")
     tool_results = []
-    validation_passed = False
 
     if api_tool_calls:
         print(f"DEBUG: Executing {len(api_tool_calls)} tool calls")
 
-        # Iterate through all tool calls returned by the model
         for raw_tc in api_tool_calls:
-            # Normalize tool call
-            function_info = raw_tc.get("function", {})
-            tc_name = function_info.get("name") or raw_tc.get("name")
-            tc_args = function_info.get("arguments", {}) or raw_tc.get("arguments", {}) or {}
+            fn = raw_tc.get("function", {}) or {}
+            tc_name = fn.get("name")
+            tc_args = fn.get("arguments", {}) or {}
+            tc_id = raw_tc.get("id")
 
             if isinstance(tc_args, str) and tc_args.strip():
                 try:
@@ -707,78 +623,58 @@ def chat_api(chat_id: str, payload: dict):
                 except:
                     tc_args = {}
 
-            normalized = {"id": raw_tc.get("id", ""), "name": tc_name, "args": tc_args}
+            print(f"DEBUG: Running tool {tc_name} with args: {tc_args}")
 
-            print(f"DEBUG: Executing tool {tc_name} with args: {tc_args}")
-            tool_output, tool_message = _execute_tool_call({"name": normalized["name"], "args": normalized["args"]}, chat_id)
+            tool_output = _execute_tool_call(tc_name, tc_args, chat_id)
 
-            # Append tool message to session messages
+            # Prepare tool message for history (OpenAI style)
+            if isinstance(tool_output, (dict, list)):
+                tool_content = json.dumps(tool_output, indent=2)
+            else:
+                tool_content = str(tool_output)
+
+            tool_message = {
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "name": tc_name,
+                "content": tool_content,
+            }
             session["messages"].append(tool_message)
-            tool_results.append({"name": normalized["name"], "output": tool_output})
 
-            # Handle tool responses
+            tool_results.append({"name": tc_name, "output": tool_output})
+
+            # Decide what to show to user based on tool
+            # NOTE: we are not re-calling the model here; this is manual UX logic
             if tc_name == "get_info":
-                reply_text = tool_output if isinstance(tool_output, str) else str(tool_output)
+                reply_text = tool_content
 
             elif tc_name == "validate_info":
-                # Handle both success and error cases
-                if "error" in tool_output.lower():
-                    reply_text = tool_output  # Return validation error
-                    break  # Stop further execution if validation fails
+                # tool_output is JSON string like {"result": "...", "errors": [...]}
+                try:
+                    parsed = json.loads(tool_output) if isinstance(tool_output, str) else tool_output
+                except Exception:
+                    parsed = {"result": "error", "errors": ["Failed to parse validation result."]}
+
+                if parsed.get("result") == "error":
+                    errors = parsed.get("errors", [])
+                    reply_text = "There were some problems with your input:\n- " + "\n- ".join(errors)
+                    # We stop further tool logic if validation failed
+                    break
                 else:
-                    # Validation passed - set flag for next tools
-                    validation_passed = True
-                    session["awaiting_add_info"] = True  # Flag to trigger next actions
-                    print("DEBUG: Validation passed, awaiting add_to_info and confirm_info...")
-                    reply_text = "Validation passed! Adding your information..."
+                    reply_text = "Validation successful. I will now show you the project details for confirmation."
 
-            elif tc_name == "add_to_info" and session.get("awaiting_add_info"):
-                # Only execute if the flag is set
-                print("DEBUG: Adding information to session...")
-                add_info_output, add_info_message = _execute_tool_call({
-                    "name": "add_to_info", 
-                    "args": {
-                        "site_count": payload.get("site_count", 0),
-                        "offset_count": payload.get("offset_count", 0),
-                        "project_name": payload.get("project_name", ""),
-                        "device_name": payload.get("device_name", ""),
-                        "device_revision": payload.get("device_revision", ""),
-                        "programme_id": payload.get("programme_id", ""),
-                        "programme_revision": payload.get("programme_revision", "")
-                    }
-                }, chat_id)
+            elif tc_name == "confirm_info":
+                reply_text = tool_content
 
-                # Append add_to_info tool message to session
-                session["messages"].append(add_info_message)
-                tool_results.append({"name": "add_to_info", "output": add_info_output})
+            elif tc_name == "create_JSON":
+                # Final JSON
+                session["final_data"] = tool_output
+                reply_text = json.dumps(tool_output, indent=2)
 
-                # After adding information, trigger confirm_info
-                print("DEBUG: Triggering confirm_info...")
-                confirm_info_output, confirm_info_message = _execute_tool_call({"name": "confirm_info", "args": {}}, chat_id)
-                session["messages"].append(confirm_info_message)
-                tool_results.append({"name": "confirm_info", "output": confirm_info_output})
-                reply_text = confirm_info_output
-
-                # After confirmation, trigger create_JSON
-                print("DEBUG: Triggering create_JSON after confirmation...")
-                create_json_output, create_json_message = _execute_tool_call({"name": "create_JSON", "args": {}}, chat_id)
-                session["messages"].append(create_json_message)
-                tool_results.append({"name": "create_JSON", "output": create_json_output})
-
-                # Show the final JSON to the user
-                reply_text = f"Project JSON created successfully!\n{json.dumps(create_json_output, indent=2)}"
-
-    # Update the assistant message with the final response text
-    if assistant_msg in session["messages"]:
-        session["messages"].remove(assistant_msg)
-    assistant_msg["content"] = reply_text
-    session["messages"].append(assistant_msg)
-
-    # Return assistant reply and final JSON (if available)
+    # Return response
     return JSONResponse({
         "response": reply_text,
         "summary_json": session.get("final_data"),
         "state": {"messages": session["messages"]},
         "tool_results": tool_results
     })
-
