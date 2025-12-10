@@ -177,9 +177,10 @@ ASSISTANT_SYSINT = {
         "directly call get_info tool to show the list that required to fill in by them.\n"
         "You must call validate_info tool to validate the information that human provided.\n"
         "If there are invalid information or missing values, you need to ask the human to correct the information.\n"
+        "Never guess or fill missing values with placeholders.\n"
         "After validate_info, you MUST immediately call confirm_info.\n"
-        "Wait for the human to agree with the details you show (e.g. they say 'yes', 'ok', 'correct'), then ONLY "
-        "call create_JSON. You MUST call create_JSON once the human agrees.\n"
+        "Wait for the human to agree with the details you show (e.g. they say 'yes', 'ok', 'correct') in confirm_info tool, then ONLY "
+        "call create_JSON. You MUST call only once create_JSON once the human agrees.\n"
         "You need to return the created JSON to the user. Then, "
         "thank the user and say goodbye!\n"
         "WORKFLOW: get_info -> validate_info -> confirm_info -> create_JSON\n"
@@ -402,7 +403,6 @@ def chatbot_with_tools(state: infoState) -> infoState:
     if state.get("messages"):
         new_output = call_model_with_tools([ASSISTANT_SYSINT] + state["messages"], tools_schema)
         print("Model reply:", getattr(new_output, "content", ""))
-        print("DEBUG: Tool calls from API:")
         if new_output.tool_calls:
             for t in new_output.tool_calls:
                 print(f"Tool Name: {t.get('name')}, Args: {t.get('args')}, ID: {t.get('id')}")
@@ -517,12 +517,26 @@ initial_state = {"messages": [], "info": []}
 # ----------------- New REST endpoints for frontend integration -----------------
 
 def _ensure_session(chat_id: str):
-    """Create a fresh session if not exists."""
+    """Create a fresh session if not exists and reset PROJECT_INFO."""
     if chat_id not in chat_session:
         chat_session[chat_id] = {
-            "messages": [],     # list of dicts
-            "final_data": None, # will hold final JSON when create_JSON executed
+            "messages": [],
+            "final_data": None,
         }
+
+        # Reset global project data for every new chat session
+        PROJECT_INFO.update({
+            "site_count": "",
+            "offset_count": "",
+            "project_name": "",
+            "device_name": "",
+            "device_revision": "",
+            "programme_id": "",
+            "programme_revision": "",
+        })
+
+        print("DEBUG: PROJECT_INFO reset for new session:", PROJECT_INFO)
+
 
 
 def _execute_tool_call(name: str, args: dict, chat_id: str | None = None):
@@ -555,7 +569,6 @@ def _execute_tool_call(name: str, args: dict, chat_id: str | None = None):
             if isinstance(out, dict):
                 chat_session[chat_id]["final_data"] = out
 
-        print(f"DEBUG: Tool {name} output (raw): {out}")
         return out
 
     except Exception as e:
@@ -609,7 +622,6 @@ def chat_api(chat_id: str, payload: dict):
     tool_results = []
 
     if api_tool_calls:
-        print(f"DEBUG: Executing {len(api_tool_calls)} tool calls")
 
         for raw_tc in api_tool_calls:
             fn = raw_tc.get("function", {}) or {}
@@ -623,7 +635,6 @@ def chat_api(chat_id: str, payload: dict):
                 except:
                     tc_args = {}
 
-            print(f"DEBUG: Running tool {tc_name} with args: {tc_args}")
 
             tool_output = _execute_tool_call(tc_name, tc_args, chat_id)
 
@@ -669,7 +680,8 @@ def chat_api(chat_id: str, payload: dict):
             elif tc_name == "create_JSON":
                 # Final JSON
                 session["final_data"] = tool_output
-                reply_text = json.dumps(tool_output, indent=2)
+                reply_text = "The techFlow project is generating at the background, please open the techFlow and check for the created project later"
+
 
     # Return response
     return JSONResponse({
@@ -678,3 +690,22 @@ def chat_api(chat_id: str, payload: dict):
         "state": {"messages": session["messages"]},
         "tool_results": tool_results
     })
+
+@app.delete("/chat/{chat_id}")
+def reset_chat(chat_id: str):
+    if chat_id in chat_session:
+        del chat_session[chat_id]
+
+    # Reset PROJECT_INFO when session is cleared
+    PROJECT_INFO.update({
+        "site_count": "",
+        "offset_count": "",
+        "project_name": "",
+        "device_name": "",
+        "device_revision": "",
+        "programme_id": "",
+        "programme_revision": "",
+    })
+
+
+    return {"status": "cleared", "chat_id": chat_id}
