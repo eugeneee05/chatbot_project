@@ -181,8 +181,9 @@ ASSISTANT_SYSINT = {
         "After validate_info, you MUST immediately call confirm_info.\n"
         "Wait for the human to agree with the details you show (e.g. they say 'yes', 'ok', 'correct') in confirm_info tool, then ONLY "
         "call create_JSON. You MUST call only once create_JSON once the human agrees.\n"
-        "You need to return the created JSON to the user. Then, "
-        "thank the user and say goodbye!\n"
+        "You need to return the created JSON to the user. \n"
+        "If user requested to change any information during the confirm_info, follow the details provided. Then, ask the user again to confirm the information. \n"
+        "Then, thank the user and say goodbye!\n"
         "WORKFLOW: get_info -> validate_info -> confirm_info -> create_JSON\n"
     )
 }
@@ -538,7 +539,6 @@ def _ensure_session(chat_id: str):
         print("DEBUG: PROJECT_INFO reset for new session:", PROJECT_INFO)
 
 
-
 def _execute_tool_call(name: str, args: dict, chat_id: str | None = None):
     """
     Execute a tool call by name and args.
@@ -588,7 +588,7 @@ def chat_initial(chat_id: str):
     assistant_msg = {"role": "assistant", "content": WELCOME_MSG}
     session["messages"].append(assistant_msg)
 
-    return JSONResponse({"response": WELCOME_MSG, "state": {"messages": session["messages"]}})
+    return JSONResponse({"response": "", "state": {"messages": session["messages"]}})
 
 
 @app.post("/chat/{chat_id}")
@@ -603,27 +603,36 @@ def chat_api(chat_id: str, payload: dict):
     session = chat_session[chat_id]
     user_text = str(payload.get("text", "")).strip()
 
-    user_msg = {"role": "user", "content": user_text}
-    session["messages"].append(user_msg)
+    # ---------------------------------
+    # Append user message
+    # ---------------------------------
+    session["messages"].append({
+        "role": "user",
+        "content": user_text
+    })
 
-    history = [ASSISTANT_SYSINT] + session["messages"]
+    def run_model_and_tools(input_text):
+        """
+        Helper: call model once and execute returned tools
+        """
+        history = [ASSISTANT_SYSINT] + session["messages"]
+        reply_text, tool_calls = call_model(history, {"input": input_text})
 
-    reply_text, api_tool_calls = call_model(history, {"input": user_text})
+        assistant_msg = {
+            "role": "assistant",
+            "content": reply_text,
+        }
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
 
-    assistant_msg = {
-        "role": "assistant",
-        "content": reply_text,
-    }
-    if api_tool_calls:
-        assistant_msg["tool_calls"] = api_tool_calls
+        session["messages"].append(assistant_msg)
 
-    session["messages"].append(assistant_msg)
+        final_reply = reply_text
 
-    tool_results = []
+        if not tool_calls:
+            return final_reply
 
-    if api_tool_calls:
-
-        for raw_tc in api_tool_calls:
+        for raw_tc in tool_calls:
             fn = raw_tc.get("function", {}) or {}
             tc_name = fn.get("name")
             tc_args = fn.get("arguments", {}) or {}
@@ -635,60 +644,75 @@ def chat_api(chat_id: str, payload: dict):
                 except:
                     tc_args = {}
 
-
             tool_output = _execute_tool_call(tc_name, tc_args, chat_id)
 
-            # Prepare tool message for history (OpenAI style)
-            if isinstance(tool_output, (dict, list)):
-                tool_content = json.dumps(tool_output, indent=2)
-            else:
-                tool_content = str(tool_output)
+            tool_content = (
+                json.dumps(tool_output, indent=2)
+                if isinstance(tool_output, (dict, list))
+                else str(tool_output)
+            )
 
-            tool_message = {
+            session["messages"].append({
                 "role": "tool",
                 "tool_call_id": tc_id,
                 "name": tc_name,
                 "content": tool_content,
-            }
-            session["messages"].append(tool_message)
+            })
 
-            tool_results.append({"name": tc_name, "output": tool_output})
-
-            # Decide what to show to user based on tool
-            # NOTE: we are not re-calling the model here; this is manual UX logic
+            # -----------------------------
+            # TOOL-SPECIFIC HANDLING
+            # -----------------------------
             if tc_name == "get_info":
-                reply_text = tool_content
+                final_reply = tool_content
 
             elif tc_name == "validate_info":
-                # tool_output is JSON string like {"result": "...", "errors": [...]}
                 try:
                     parsed = json.loads(tool_output) if isinstance(tool_output, str) else tool_output
                 except Exception:
                     parsed = {"result": "error", "errors": ["Failed to parse validation result."]}
 
                 if parsed.get("result") == "error":
-                    errors = parsed.get("errors", [])
-                    reply_text = "There were some problems with your input:\n- " + "\n- ".join(errors)
-                    # We stop further tool logic if validation failed
-                    break
-                else:
-                    reply_text = "Validation successful. I will now show you the project details for confirmation."
+                    final_reply = (
+                        "There were some problems with your input:\n- "
+                        + "\n- ".join(parsed.get("errors", []))
+                    )
+                    return final_reply
+
+                # ✅ SHOW validation result to user
+                session["messages"].append({
+                    "role": "assistant",
+                    "content": "Validation successful. Proceeding to confirmation..."
+                })
+
+                # ✅ AUTO SEND OK (only once)
+                if not session.get("auto_ok_sent"):
+                    session["auto_ok_sent"] = True
+                    return run_model_and_tools("ok")
 
             elif tc_name == "confirm_info":
-                reply_text = tool_content
+                final_reply = tool_content
 
             elif tc_name == "create_JSON":
-                # Final JSON
                 session["final_data"] = tool_output
-                reply_text = "The techFlow project is generating at the background, please open the techFlow and check for the created project later"
+                final_reply = (
+                    "The techFlow project is generating in the background. "
+                    "Please open techFlow later to check the created project."
+                )
 
+        return final_reply
 
-    # Return response
+    # ---------------------------------
+    # START FLOW
+    # ---------------------------------
+    reply_text = run_model_and_tools(user_text)
+
+    # ---------------------------------
+    # FINAL RESPONSE
+    # ---------------------------------
     return JSONResponse({
         "response": reply_text,
         "summary_json": session.get("final_data"),
         "state": {"messages": session["messages"]},
-        "tool_results": tool_results
     })
 
 @app.delete("/chat/{chat_id}")
