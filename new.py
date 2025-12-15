@@ -182,7 +182,8 @@ ASSISTANT_SYSINT = {
         "Wait for the human to agree with the details you show (e.g. they say 'yes', 'ok', 'correct') in confirm_info tool, then ONLY "
         "call create_JSON. You MUST call only once create_JSON once the human agrees.\n"
         "You need to return the created JSON to the user. \n"
-        "If user requested to change any information during the confirm_info, follow the details provided. Then, ask the user again to confirm the information. \n"
+        "If user requested to change any information during the confirm_info (example: change device name to halo),  \n"
+        "you need to call again validate_info together with all latest project_info.\n"
         "Then, thank the user and say goodbye!\n"
         "WORKFLOW: get_info -> validate_info -> confirm_info -> create_JSON\n"
     )
@@ -678,16 +679,21 @@ def chat_api(chat_id: str, payload: dict):
                     )
                     return final_reply
 
-                # ✅ SHOW validation result to user
+                # Show validation result to user
                 session["messages"].append({
                     "role": "assistant",
                     "content": "Validation successful. Proceeding to confirmation..."
                 })
 
-                # ✅ AUTO SEND OK (only once)
-                if not session.get("auto_ok_sent"):
-                    session["auto_ok_sent"] = True
+                # Always re-run confirmation after any successful validation (even edits)
+                if session.get("auto_confirm_in_progress"):
+                    return final_reply
+
+                session["auto_confirm_in_progress"] = True
+                try:
                     return run_model_and_tools("ok")
+                finally:
+                    session["auto_confirm_in_progress"] = False
 
             elif tc_name == "confirm_info":
                 final_reply = tool_content
