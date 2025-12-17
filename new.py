@@ -100,15 +100,7 @@ tools_schema = [
                     "programme_id": {"type": "string"},
                     "programme_revision": {"type": "string"}
                 },
-                "required": [
-                    "site_count",
-                    "offset_count",
-                    "project_name",
-                    "device_name",
-                    "device_revision",
-                    "programme_id",
-                    "programme_revision"
-                ],
+                "required": [],
             },
         },
     },
@@ -176,13 +168,15 @@ ASSISTANT_SYSINT = {
         "If human say they want to create project, "
         "directly call get_info tool to show the list that required to fill in by them.\n"
         "You must call validate_info tool to validate the information that human provided.\n"
+        "User might provide partial information, you are still required to call validate_info first.\n"
         "If there are invalid information or missing values, you need to ask the human to correct the information.\n"
+        "After user return new information or corrected information, you need to call validate_info again.\n"
         "Never guess or fill missing values with placeholders.\n"
         "After validate_info, you MUST immediately call confirm_info.\n"
         "Wait for the human to agree with the details you show (e.g. they say 'yes', 'ok', 'correct') in confirm_info tool, then ONLY "
         "call create_JSON. You MUST call only once create_JSON once the human agrees.\n"
         "You need to return the created JSON to the user. \n"
-        "If user requested to change any information during the confirm_info (example: change device name to halo),  \n"
+        "If user requested or intended to change any information during the confirm_info,  \n"
         "you need to call again validate_info together with all latest project_info.\n"
         "Then, thank the user and say goodbye!\n"
         "WORKFLOW: get_info -> validate_info -> confirm_info -> create_JSON\n"
@@ -266,35 +260,53 @@ def validate_info(
     print("validating.....")
     errors = []
 
+    # -----------------------------
+    # Integer validation
+    # -----------------------------
     try:
-        site_count_int = int(site_count)
+        int(site_count)
     except (ValueError, TypeError):
         errors.append("site_count must be an integer.")
-        site_count_int = None
 
     try:
-        offset_count_int = int(offset_count)
+        int(offset_count)
     except (ValueError, TypeError):
         errors.append("offset_count must be an integer.")
-        offset_count_int = None
 
-    if not isinstance(project_name, str) or not project_name.strip():
-        errors.append("project_name is required.")
-    if not isinstance(device_name, str) or not device_name.strip():
-        errors.append("device_name is required.")
-    if not isinstance(device_revision, str) or not device_revision.strip():
-        errors.append("device_revision is required.")
-    if not isinstance(programme_id, str) or not programme_id.strip():
-        errors.append("programme_id is required.")
-    if not isinstance(programme_revision, str) or not programme_revision.strip():
-        errors.append("programme_revision is required.")
+    # -----------------------------
+    # Allowed characters validation
+    # Only A-Z a-z 0-9 . _
+    # -----------------------------
+    allowed_pattern = re.compile(r"^[A-Za-z0-9._]+$")
 
+    def validate_text(field_name: str, value: str):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{field_name} is required.")
+            return
+        if not allowed_pattern.match(value):
+            errors.append(
+                f"{field_name} contains invalid characters. "
+                "Only letters, numbers, '.' and '_' are allowed."
+            )
+
+    validate_text("project_name", project_name)
+    validate_text("device_name", device_name)
+    validate_text("device_revision", device_revision)
+    validate_text("programme_id", programme_id)
+    validate_text("programme_revision", programme_revision)
+
+    # -----------------------------
+    # Return errors if any
+    # -----------------------------
     if errors:
         return json.dumps({
             "result": "error",
             "errors": errors
         })
 
+    # -----------------------------
+    # Save validated values
+    # -----------------------------
     PROJECT_INFO["site_count"] = site_count
     PROJECT_INFO["offset_count"] = offset_count
     PROJECT_INFO["project_name"] = project_name
@@ -308,6 +320,7 @@ def validate_info(
     return json.dumps({
         "result": "ok"
     })
+
 
 
 @tool
