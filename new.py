@@ -245,44 +245,41 @@ def get_info() -> str:
 
 @tool
 def validate_info(
-    site_count: str,
-    offset_count: str,
-    project_name: str,
-    device_name: str,
-    device_revision: str,
-    programme_id: str,
-    programme_revision: str
+    site_count: str = None,
+    offset_count: str = None,
+    project_name: str = None,
+    device_name: str = None,
+    device_revision: str = None,
+    programme_id: str = None,
+    programme_revision: str = None
 ) -> str:
-    """Validates the input information. There are total of 7 information:
-    site_count, offset_count, project_name, device_name, device_revision,
-    programme_id, programme_revision.
-    """
+    """Validates the input information. Fields are optional to allow partial updates."""
     print("validating.....")
     errors = []
 
     # -----------------------------
-    # Integer validation
+    # Integer validation (only if provided)
     # -----------------------------
-    try:
-        int(site_count)
-    except (ValueError, TypeError):
-        errors.append("site_count must be an integer.")
+    def validate_int(field_name, value):
+        if value is not None and str(value).strip() != "":
+            try:
+                int(value)
+            except (ValueError, TypeError):
+                errors.append(f"{field_name} must be an integer.")
 
-    try:
-        int(offset_count)
-    except (ValueError, TypeError):
-        errors.append("offset_count must be an integer.")
+    validate_int("site_count", site_count)
+    validate_int("offset_count", offset_count)
 
     # -----------------------------
     # Allowed characters validation
-    # Only A-Z a-z 0-9 . _
     # -----------------------------
     allowed_pattern = re.compile(r"^[A-Za-z0-9._]+$")
 
     def validate_text(field_name: str, value: str):
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"{field_name} is required.")
-            return
+        # Skip validation if the field is None or just whitespace
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return 
+        
         if not allowed_pattern.match(value):
             errors.append(
                 f"{field_name} contains invalid characters. "
@@ -305,21 +302,24 @@ def validate_info(
         })
 
     # -----------------------------
-    # Save validated values
+    # Save provided values only
     # -----------------------------
-    PROJECT_INFO["site_count"] = site_count
-    PROJECT_INFO["offset_count"] = offset_count
-    PROJECT_INFO["project_name"] = project_name
-    PROJECT_INFO["device_name"] = device_name
-    PROJECT_INFO["device_revision"] = device_revision
-    PROJECT_INFO["programme_id"] = programme_id
-    PROJECT_INFO["programme_revision"] = programme_revision
+    updates = {
+        "site_count": site_count,
+        "offset_count": offset_count,
+        "project_name": project_name,
+        "device_name": device_name,
+        "device_revision": device_revision,
+        "programme_id": programme_id,
+        "programme_revision": programme_revision
+    }
 
-    print("Values stored successfully")
+    for key, val in updates.items():
+        if val is not None:
+            PROJECT_INFO[key] = val
 
-    return json.dumps({
-        "result": "ok"
-    })
+    print("Provided values stored successfully")
+    return json.dumps({"result": "ok"})
 
 
 
@@ -685,6 +685,7 @@ def chat_api(chat_id: str, payload: dict):
                 except Exception:
                     parsed = {"result": "error", "errors": ["Failed to parse validation result."]}
 
+                # 1. Handle Validation Errors
                 if parsed.get("result") == "error":
                     final_reply = (
                         "There were some problems with your input:\n- "
@@ -692,19 +693,36 @@ def chat_api(chat_id: str, payload: dict):
                     )
                     return final_reply
 
-                # Show validation result to user
-                session["messages"].append({
-                    "role": "assistant",
-                    "content": "Validation successful. Proceeding to confirmation..."
-                })
+                # 2. Check if the information is complete or still partial
+                # Define which keys are absolutely necessary for a final confirmation
+                required_fields = [
+                    "site_count", "offset_count", "project_name", 
+                    "device_name", "device_revision", "programme_id", "programme_revision"
+                ]
+                
+                missing_fields = [f for f in required_fields if not PROJECT_INFO.get(f)]
 
-                # Always re-run confirmation after any successful validation (even edits)
+                if missing_fields:
+                    # Data is valid but incomplete
+                    status_msg = f"Got it. I've updated the details, but I still need: {', '.join(missing_fields)}."
+                    session["messages"].append({"role": "assistant", "content": status_msg})
+                    return status_msg
+                else:
+                    # Data is valid and complete
+                    session["messages"].append({
+                        "role": "assistant", 
+                        "content": "All information is validated. Proceeding to confirmation..."
+                    })
+
+                # 3. Always re-run confirmation ONLY if data is complete
                 if session.get("auto_confirm_in_progress"):
-                    return final_reply
+                    # Prevent infinite recursion if run_model_and_tools calls validate_info again
+                    return "Please confirm the details above."
 
                 session["auto_confirm_in_progress"] = True
                 try:
-                    return run_model_and_tools("ok")
+                    # Prompt the model to display the summary for the user to confirm
+                    return run_model_and_tools("The information is now complete. Please show a summary and ask for confirmation.")
                 finally:
                     session["auto_confirm_in_progress"] = False
 
